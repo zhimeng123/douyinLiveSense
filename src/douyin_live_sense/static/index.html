@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <title>直播监听守卫 · LiveSense</title>
+    <link rel="stylesheet" href="/style.css" />
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="LiveSense 首页"
+        ><span class="brand-icon">◉</span> LiveSense<span class="brand-note"
+          >直播监听守卫</span
+        ></a
+      ><span class="local-label"><i></i> 本机运行 · 音频留在本地</span>
+    </header>
+    <main>
+      <section class="intro">
+        <div class="eyebrow">DOUYIN LIVE / AUDIO GUARD</div>
+        <h1>开播即记录，<br class="mobile-only" />每一段声音都有迹可循。</h1>
+        <p>
+          持续守卫一个直播间，自动等待开播与恢复连接，将音频按场次保存在本机。
+        </p>
+      </section>
+      <section class="monitor-card" aria-labelledby="monitor-heading">
+        <div class="card-heading">
+          <h2 id="monitor-heading">直播间守卫</h2>
+          <span id="state" class="badge" aria-live="polite">正在连接服务</span>
+        </div>
+        <form id="monitor-form">
+          <label for="room">直播间 ID 或链接</label>
+          <div class="input-row">
+            <input
+              id="room"
+              name="room"
+              value="123456789"
+              placeholder="例如 123456789 或抖音直播链接"
+              required
+              maxlength="2048"
+              autocomplete="off"
+            /><button id="start" type="submit" class="primary">
+              开启守卫 <span>→</span></button
+            ><button id="stop" type="button" class="secondary" disabled>
+              停止
+            </button>
+          </div>
+        </form>
+        <div id="notice" class="notice" role="alert" hidden></div>
+        <div class="live-summary">
+          <span id="connection-dot" class="connection-dot"></span>
+          <div>
+            <strong id="anchor">准备开始监听</strong>
+            <p id="live-title">
+              输入直播间，开启后可关闭此网页；本机服务需要保持运行。
+            </p>
+          </div>
+          <span id="retry" class="retry"></span>
+        </div>
+        <div class="metrics">
+          <div>
+            <span>当前场次采集时长</span><strong id="duration">00:00:00</strong>
+          </div>
+          <div>
+            <span>已保存音频段</span
+            ><strong id="segment-count">0 <small>段</small></strong>
+          </div>
+          <div>
+            <span>最近收到音频</span
+            ><strong id="last-audio" class="time-value">—</strong>
+          </div>
+        </div>
+        <div class="card-foot">
+          <span>每 30 秒保存一段 · WAV · 普通话分析将在后续加入</span
+          ><span id="save-path" title="音频保存目录"></span>
+        </div>
+      </section>
+      <section class="history-section" aria-labelledby="history-heading">
+        <div class="section-heading">
+          <div>
+            <div class="eyebrow">LOCAL ARCHIVE</div>
+            <h2 id="history-heading">音频档案</h2>
+          </div>
+          <span class="subtle">时间均为北京时间 · 音频接收时间</span>
+        </div>
+        <div class="archive-grid">
+          <aside class="sessions-panel">
+            <h3>直播场次</h3>
+            <div id="sessions" class="sessions">
+              <p class="empty">暂无采集记录</p>
+            </div>
+            <div class="pagination">
+              <button id="sessions-prev" class="text-button" disabled>
+                上一页</button
+              ><span id="sessions-page">1</span
+              ><button id="sessions-next" class="text-button" disabled>
+                下一页
+              </button>
+            </div>
+          </aside>
+          <section class="segments-panel">
+            <div class="segment-heading">
+              <h3 id="selected-heading">选择一个场次查看音频</h3>
+              <span id="selected-description" class="subtle"></span>
+            </div>
+            <div id="gaps" class="gap-list"></div>
+            <div id="player-section" class="player" hidden>
+              <span id="player-label"></span
+              ><audio id="player" controls preload="none"></audio>
+            </div>
+            <div id="segments">
+              <div class="archive-empty">
+                <span>♫</span>
+                <p>采集完成的音频将在这里出现</p>
+                <small>每段音频均记录接收时间，可回听或下载。</small>
+              </div>
+            </div>
+            <div class="pagination">
+              <button id="segments-prev" class="text-button" disabled>
+                上一页</button
+              ><span id="segments-page">1</span
+              ><button id="segments-next" class="text-button" disabled>
+                下一页
+              </button>
+            </div>
+          </section>
+        </div>
+      </section>
+      <footer>LiveSense <span>第一阶段 / 持续监听与音频保存</span></footer>
+    </main>
+  </body>
+</html>

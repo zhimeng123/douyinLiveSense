@@ -1,4 +1,5 @@
 import fcntl
+import json
 import os
 import sqlite3
 import struct
@@ -62,6 +63,114 @@ class Storage:
                 kind TEXT NOT NULL, started_at TEXT NOT NULL, ended_at TEXT, detail TEXT
             );
         """)
+        self._migrate_analysis()
+
+    def _migrate_analysis(self) -> None:
+        version = self.db.execute("PRAGMA user_version").fetchone()[0]
+        if version > 2:
+            raise RuntimeError("数据库版本比当前程序新，请使用对应版本程序。")
+        if version == 2:
+            return
+        # SQLite's backup API includes committed WAL pages, unlike a file copy.
+        if self.db.execute("SELECT 1 FROM sessions LIMIT 1").fetchone():
+            backup = self.data_dir / "backups" / f"before-analysis-v{version}-{uuid4().hex}.sqlite3"
+            backup.parent.mkdir(parents=True, exist_ok=True)
+            with sqlite3.connect(backup) as target:
+                self.db.backup(target)
+        statements = [
+            "ALTER TABLE guard ADD COLUMN realtime_analysis INTEGER NOT NULL DEFAULT 0",
+            """CREATE TABLE epochs (
+                id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id),
+                closed_at TEXT)""",
+            """INSERT INTO epochs(id,session_id,closed_at)
+                SELECT epoch_id,session_id,? FROM segments GROUP BY epoch_id""",
+            """CREATE TABLE analysis_runs (
+                id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id),
+                config_key TEXT NOT NULL, config_json TEXT NOT NULL, created_at TEXT NOT NULL,
+                target_sequence INTEGER NOT NULL DEFAULT 0,
+                processed_sequence INTEGER NOT NULL DEFAULT 0,
+                state TEXT NOT NULL DEFAULT 'pending', last_error TEXT,
+                pending_json TEXT, export_error TEXT,
+                UNIQUE(session_id,config_key))""",
+            """CREATE TABLE analysis_jobs (
+                id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES analysis_runs(id),
+                job_key TEXT NOT NULL, sequence INTEGER NOT NULL, kind TEXT NOT NULL,
+                state TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0,
+                payload_json TEXT NOT NULL, assignments_json TEXT NOT NULL DEFAULT '[]',
+                last_error TEXT, elapsed_seconds REAL,
+                UNIQUE(run_id,job_key))""",
+            """CREATE TABLE speaker_profiles (
+                id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES analysis_runs(id),
+                number INTEGER NOT NULL, namespace TEXT NOT NULL, embedding_json TEXT NOT NULL,
+                clean_samples INTEGER NOT NULL, UNIQUE(run_id,number))""",
+            """CREATE TABLE utterances (
+                ordinal INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE,
+                run_id TEXT NOT NULL REFERENCES analysis_runs(id),
+                job_id TEXT NOT NULL REFERENCES analysis_jobs(id),
+                start_at TEXT NOT NULL, end_at TEXT NOT NULL,
+                speaker_ids_json TEXT NOT NULL, text TEXT NOT NULL,
+                flags_json TEXT NOT NULL, sources_json TEXT NOT NULL)""",
+            "CREATE INDEX utterances_run ON utterances(run_id,ordinal)",
+            "PRAGMA user_version=1",
+        ]
+        with self.db:
+            if version == 0:
+                for statement in statements:
+                    self.db.execute(
+                        statement, (utc_now(),) if statement.startswith("INSERT") else ()
+                    )
+            self.db.execute(
+                "ALTER TABLE analysis_runs ADD COLUMN scope TEXT NOT NULL DEFAULT 'session' "
+                "CHECK(scope IN ('session','segment'))"
+            )
+            self.db.execute(
+                "ALTER TABLE analysis_runs ADD COLUMN segment_id TEXT REFERENCES segments(id)"
+            )
+            self.db.execute(
+                "ALTER TABLE analysis_runs ADD COLUMN revision INTEGER NOT NULL DEFAULT 1"
+            )
+            self.db.execute(
+                "CREATE INDEX analysis_scope ON analysis_runs(scope,segment_id,revision)"
+            )
+            self.db.execute(
+                "CREATE TABLE utterance_sources (utterance_id TEXT NOT NULL REFERENCES "
+                "utterances(id), segment_id TEXT NOT NULL REFERENCES segments(id), "
+                "PRIMARY KEY(utterance_id,segment_id))"
+            )
+            self.db.execute(
+                "CREATE INDEX utterance_segment ON utterance_sources(segment_id,utterance_id)"
+            )
+            for row in self.db.execute("SELECT id,sources_json FROM utterances").fetchall():
+                self.db.executemany(
+                    "INSERT OR IGNORE INTO utterance_sources VALUES (?,?)",
+                    [
+                        (row["id"], source["segment_id"])
+                        for source in json.loads(row["sources_json"])
+                    ],
+                )
+            self.db.execute("PRAGMA user_version=2")
+
+    def set_realtime(self, enabled: bool) -> None:
+        with self.db:
+            self.db.execute("UPDATE guard SET realtime_analysis=? WHERE id=1", (int(enabled),))
+
+    def open_epoch(self, session_id: str, epoch_id: str) -> None:
+        with self.db:
+            self.db.execute(
+                "INSERT OR IGNORE INTO epochs VALUES (?,?,NULL)", (epoch_id, session_id)
+            )
+
+    def close_epoch(self, epoch_id: str) -> None:
+        with self.db:
+            self.db.execute("UPDATE epochs SET closed_at=? WHERE id=?", (utc_now(), epoch_id))
+
+    def epoch_closed(self, epoch_id: str) -> bool:
+        row = self.db.execute("SELECT closed_at FROM epochs WHERE id=?", (epoch_id,)).fetchone()
+        return not row or row[0] is not None
+
+    def close_stale_epochs(self) -> None:
+        with self.db:
+            self.db.execute("UPDATE epochs SET closed_at=? WHERE closed_at IS NULL", (utc_now(),))
 
     def guard(self) -> dict:
         return dict(self.db.execute("SELECT * FROM guard WHERE id=1").fetchone())
@@ -120,6 +229,7 @@ class Storage:
     def reserve_segment(
         self, session_id: str, epoch_id: str, start_at: str, sample_rate: int
     ) -> dict:
+        self.open_epoch(session_id, epoch_id)
         session = self.session(session_id)
         sequence = self.db.execute(
             "SELECT COALESCE(MAX(sequence),0)+1 FROM segments WHERE session_id=?", (session_id,)

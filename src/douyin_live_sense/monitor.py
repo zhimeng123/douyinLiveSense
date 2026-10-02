@@ -46,11 +46,12 @@ class Monitor:
     async def restore(self) -> None:
         for failure in self.store.recover():
             logger.error("音频恢复失败: %s", failure)
+        self.store.close_stale_epochs()
         guard = self.store.guard()
         if guard["enabled"] and guard["room_id"]:
-            await self.start(guard["room_id"])
+            await self.start(guard["room_id"], bool(guard["realtime_analysis"]))
 
-    async def start(self, value: str) -> dict:
+    async def start(self, value: str, realtime_analysis: bool = False) -> dict:
         room_id = normalize_room(value)
         async with self.lock:
             if self.enabled:
@@ -71,6 +72,7 @@ class Monitor:
             self.enabled = True
             self.state = "checking"
             self.store.set_guard(room_id, True)
+            self.store.set_realtime(realtime_analysis)
             if self.session:
                 self.store.open_gap(
                     self.session["id"],
@@ -86,6 +88,7 @@ class Monitor:
             self.store.set_guard(self.room_id, False)
             await self._cancel_task()
             self._finish_session("stopped")
+            self.store.set_realtime(False)
             self.state = "stopped"
             self.last_error = None
             return self.status()
@@ -214,6 +217,7 @@ class Monitor:
         return {
             "state": self.state,
             "enabled": self.enabled,
+            "realtime_analysis": bool(self.store.guard()["realtime_analysis"]),
             "room_id": self.room_id,
             "anchor_name": self.anchor_name,
             "title": self.title,

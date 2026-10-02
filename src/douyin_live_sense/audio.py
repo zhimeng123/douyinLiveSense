@@ -97,6 +97,7 @@ class SegmentWriter:
                     self.session_id, "incomplete_sample", "连接尾部有 1 字节不完整采样"
                 )
                 self.remainder = b""
+            self.store.close_epoch(self.epoch_id)
 
 
 class FFmpegCapture:

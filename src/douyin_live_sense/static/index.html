@@ -4,19 +4,33 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light" />
-    <title>直播监听守卫 · LiveSense</title>
+    <title>直播监听守卫 · ValuSense</title>
     <link rel="stylesheet" href="/style.css" />
     <script src="/app.js" defer></script>
   </head>
   <body>
+    <button id="menu-toggle" class="menu-toggle" type="button" aria-label="打开菜单" aria-expanded="false" aria-controls="site-menu">
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path class="menu-open-icon" d="M4 6h16M4 12h16M4 18h16" />
+        <path class="menu-close-icon" d="m6 6 12 12M18 6 6 18" />
+      </svg>
+    </button>
+    <div id="menu-backdrop" class="menu-backdrop" aria-hidden="true"></div>
+    <nav id="site-menu" class="menu-drawer" aria-label="主菜单" aria-hidden="true" inert>
+      <strong class="drawer-heading">菜单</strong>
+      <a href="#/home" id="nav-home">ValuSense</a>
+      <a href="#/queue" id="nav-queue">分析队列 <span id="queue-badge">0</span></a>
+    </nav>
     <header class="topbar">
-      <a class="brand" href="/" aria-label="LiveSense 首页"
-        ><span class="brand-icon">◉</span> LiveSense<span class="brand-note"
+      <a class="brand" href="#/home" aria-label="ValuSense 首页"
+        ><span class="brand-icon">◉</span> ValuSense<span class="brand-note"
           >直播监听守卫</span
         ></a
       ><span class="local-label"><i></i> 本机运行 · 音频留在本地</span>
     </header>
     <main>
+      <p id="page-error" class="notice" role="alert" hidden></p>
+      <div id="home-view">
       <section class="intro">
         <div class="eyebrow">DOUYIN LIVE / AUDIO GUARD</div>
         <h1>开播即记录，<br class="mobile-only" />每一段声音都有迹可循。</h1>
@@ -46,6 +60,10 @@
               停止
             </button>
           </div>
+          <label class="analysis-switch" for="realtime">
+            <input id="realtime" type="checkbox" /> 实时生成普通话记录
+            <small>默认手动；中途开启会先补分析本场次之前保存的音频。</small>
+          </label>
         </form>
         <div id="notice" class="notice" role="alert" hidden></div>
         <div class="live-summary">
@@ -72,62 +90,46 @@
           </div>
         </div>
         <div class="card-foot">
-          <span>每 30 秒保存一段 · WAV · 普通话分析将在后续加入</span
+          <span>按采样保存 30 秒 WAV · 停止或断线保留尾段</span
           ><span id="save-path" title="音频保存目录"></span>
         </div>
       </section>
+      <section class="analysis-summary" aria-label="分析状态">
+        <div class="transcript-heading"><h2>本地分析</h2>
+          <button id="analyse-current" class="secondary" disabled>分析当前场次全部切片</button>
+        </div>
+        <p id="analysis-global">正在检查模型</p>
+        <p id="model-hint" class="subtle"></p>
+      </section>
       <section class="history-section" aria-labelledby="history-heading">
         <div class="section-heading">
-          <div>
-            <div class="eyebrow">LOCAL ARCHIVE</div>
-            <h2 id="history-heading">音频档案</h2>
-          </div>
-          <span class="subtle">时间均为北京时间 · 音频接收时间</span>
+          <div><div class="eyebrow">LOCAL ARCHIVE</div><h2 id="history-heading">音频档案</h2></div>
+          <span class="subtle">北京时间 · 音频接收时间</span>
         </div>
-        <div class="archive-grid">
-          <aside class="sessions-panel">
-            <h3>直播场次</h3>
-            <div id="sessions" class="sessions">
-              <p class="empty">暂无采集记录</p>
-            </div>
-            <div class="pagination">
-              <button id="sessions-prev" class="text-button" disabled>
-                上一页</button
-              ><span id="sessions-page">1</span
-              ><button id="sessions-next" class="text-button" disabled>
-                下一页
-              </button>
-            </div>
-          </aside>
-          <section class="segments-panel">
-            <div class="segment-heading">
-              <h3 id="selected-heading">选择一个场次查看音频</h3>
-              <span id="selected-description" class="subtle"></span>
-            </div>
-            <div id="gaps" class="gap-list"></div>
-            <div id="player-section" class="player" hidden>
-              <span id="player-label"></span
-              ><audio id="player" controls preload="none"></audio>
-            </div>
-            <div id="segments">
-              <div class="archive-empty">
-                <span>♫</span>
-                <p>采集完成的音频将在这里出现</p>
-                <small>每段音频均记录接收时间，可回听或下载。</small>
-              </div>
-            </div>
-            <div class="pagination">
-              <button id="segments-prev" class="text-button" disabled>
-                上一页</button
-              ><span id="segments-page">1</span
-              ><button id="segments-next" class="text-button" disabled>
-                下一页
-              </button>
-            </div>
-          </section>
+        <div id="sessions" class="archive-list"><p class="empty">暂无采集记录</p></div>
+        <div class="pagination">
+          <button id="sessions-prev" class="text-button" disabled>上一页</button>
+          <span id="sessions-page">1</span>
+          <button id="sessions-next" class="text-button" disabled>下一页</button>
         </div>
       </section>
-      <footer>LiveSense <span>第一阶段 / 持续监听与音频保存</span></footer>
+      </div>
+      <section id="queue-view" hidden aria-labelledby="queue-heading">
+        <div class="intro"><div class="eyebrow">LOCAL ANALYSIS</div><h1 id="queue-heading">分析队列</h1>
+          <p>每个音频档案的分析请求显示一条进度记录，展开查看各切片状态。</p>
+        </div>
+        <p id="queue-summary" class="subtle" aria-live="polite">正在读取分析记录…</p>
+        <div id="queue-records" class="archive-list"></div>
+        <div class="pagination">
+          <button id="queue-prev" class="text-button" disabled>上一页记录</button>
+          <span id="queue-page">1</span>
+          <button id="queue-next" class="text-button" disabled>下一页记录</button>
+        </div>
+      </section>
+      <section id="player-section" class="player" hidden aria-label="音频回听">
+        <span id="player-label"></span><audio id="player" controls preload="none"></audio>
+      </section>
+      <footer>ValuSense <span>持续监听 · 人物标记 · 普通话记录</span></footer>
     </main>
   </body>
 </html>

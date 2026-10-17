@@ -1,7 +1,9 @@
 [project]
 name = "douyin-live-sense"
 version = "0.1.0"
-description = "本机抖音直播音频监听守卫"
+description = "本机抖音直播监听、录音与普通话转写分析"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.11,<3.12"
 dependencies = [
     "fastapi>=0.115,<1",

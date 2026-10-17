@@ -25,9 +25,9 @@
 
 ### 1. 一键准备
 
-克隆项目后，在项目根目录执行：
-
 ```sh
+git clone https://github.com/zhimeng123/douyinLiveSense.git
+cd douyinLiveSense
 ./scripts/setup.sh
 ```
 
@@ -296,3 +296,14 @@ uv run --locked --extra analysis --env-file .env python tools/archive_acceptance
 - 分析速度与硬件和内容有关，可能积压；进度和待处理状态如实显示。
 - 电脑休眠或服务未运行时无法采集，缺口会保留。首版通过启动命令运行，不安装开机服务。
 - 不自动清理历史音频；请为长期采集预留磁盘空间。抖音接口变化可能需要更新直播解析依赖或适配层。
+
+## 许可证
+
+本项目以 [MIT 许可证](LICENSE) 发布。
+
+第三方依赖与模型由各自许可方提供，遵循其自身条款，本项目不再分发它们：
+
+- Python 依赖（如 FastAPI、uvicorn、StreamGet、websockets、pyannote.audio、FunASR、PyTorch、Transformers）为 MIT、BSD-3-Clause 或 Apache-2.0 等宽松许可。
+- 分析模型（`pyannote/speaker-diarization-community-1`、`funasr/paraformer-zh`、`funasr/ct-punc`）由 `prepare-models` 从 Hugging Face 下载到本机，使用前请阅读各模型页面的许可与使用条款。Community-1 需要在页面上接受条款。
+
+采集与使用他人直播内容还需遵守平台规则与当地法律；本项目不授予任何第三方内容的权利。

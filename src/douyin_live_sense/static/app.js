@@ -14,6 +14,8 @@ const state = {
   monitorEnabled: false, analysisBusy: false, sessions: new Map(),
   visibleSessions: new Set(), pinnedSession: null, route: "home",
   queueRequests: new Map(), queueLoading: false,
+  localBusy: false, localSessionId: null, localReportId: null,
+  localSocket: null, localStream: null, localContext: null, localReport: null,
 };
 const timeFormat = new Intl.DateTimeFormat("zh-CN", {
   timeZone: "Asia/Shanghai", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
@@ -79,7 +81,21 @@ function play(path, label) {
 function renderMonitor(data) {
   const wasEnabled = state.monitorEnabled;
   state.monitor = data;
-  state.monitorEnabled = data.enabled;
+  state.monitorEnabled = data.enabled && data.mode !== "local";
+  if (data.mode === "local") {
+    $("state").textContent = "本机录音进行中";
+    $("state").className = "badge waiting";
+    $("connection-dot").className = "connection-dot waiting";
+    $("anchor").textContent = "本机录音进行中";
+    $("live-title").textContent = "请在本机录音卡片停止后，再开启直播间守卫。";
+    $("start").disabled = true;
+    $("stop").disabled = true;
+    $("room").disabled = true;
+    $("realtime").disabled = true;
+    $("analyse-current").disabled = state.analysisBusy || !data.session_id;
+    notice(data.last_error || state.actionError);
+    return;
+  }
   if (data.enabled) $("realtime").checked = data.realtime_analysis;
   else if (wasEnabled) $("realtime").checked = false;
   $("realtime").disabled = state.busy || state.analysisBusy;
@@ -542,6 +558,197 @@ function route() {
   $("nav-queue").setAttribute("aria-current", state.route === "queue" ? "page" : "false");
   loadQueue().catch((error) => notice(error.message));
 }
+function workletUrl() {
+  const code = `
+    function concat(a, b) {
+      const out = new Float32Array(a.length + b.length);
+      out.set(a); out.set(b, a.length); return out;
+    }
+    class PCMEncoder extends AudioWorkletProcessor {
+      constructor(options) {
+        super();
+        this.ratio = sampleRate / options.processorOptions.targetRate;
+        this.pos = 0;
+        this.tail = new Float32Array(0);
+      }
+      process(inputs) {
+        const input = inputs[0][0];
+        if (!input) return true;
+        const buffer = this.tail.length ? concat(this.tail, input) : input;
+        const out = [];
+        let pos = this.pos;
+        while (Math.floor(pos) + 1 < buffer.length) {
+          const i = Math.floor(pos), frac = pos - i;
+          out.push(buffer[i] * (1 - frac) + buffer[i + 1] * frac);
+          pos += this.ratio;
+        }
+        const consumed = Math.floor(pos);
+        this.tail = buffer.slice(consumed);
+        this.pos = pos - consumed;
+        if (out.length) {
+          const pcm = new Int16Array(out.length);
+          for (let i = 0; i < out.length; i++) {
+            const v = Math.max(-1, Math.min(1, out[i]));
+            pcm[i] = v < 0 ? v * 0x8000 : v * 0x7fff;
+          }
+          this.port.postMessage(pcm.buffer, [pcm.buffer]);
+        }
+        return true;
+      }
+    }
+    registerProcessor("pcm-encoder", PCMEncoder);
+  `;
+  return URL.createObjectURL(new Blob([code], { type: "application/javascript" }));
+}
+async function acquireStream(source) {
+  if (source === "system") {
+    const media = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+    if (!media.getAudioTracks().length) {
+      for (const track of media.getTracks()) track.stop();
+      throw new Error("未共享音频。请在弹窗中选择“分享标签页音频/系统音频”。");
+    }
+    for (const track of media.getVideoTracks()) track.stop();
+    return media;
+  }
+  return navigator.mediaDevices.getUserMedia({ audio: true });
+}
+async function startAudioStream(socket, stream) {
+  const context = new AudioContext({ sampleRate: 16000 });
+  await context.audioWorklet.addModule(workletUrl());
+  const source = context.createMediaStreamSource(stream);
+  const node = new AudioWorkletNode(context, "pcm-encoder", {
+    processorOptions: { targetRate: 16000 },
+  });
+  node.port.onmessage = (event) => {
+    if (socket.readyState === WebSocket.OPEN) socket.send(event.data);
+  };
+  const sink = context.createGain();
+  sink.gain.value = 0;
+  source.connect(node).connect(sink).connect(context.destination);
+  state.localContext = context;
+  return node;
+}
+function resetLocalReport() {
+  const report = state.localReport;
+  if (!report) return;
+  report.run = null;
+  report.cursor = 0;
+  report.rows.clear();
+  report.list.replaceChildren();
+  report.empty.hidden = false;
+  report.more.hidden = true;
+}
+function localNotice(message) {
+  const element = $("local-notice");
+  element.textContent = message || "";
+  element.hidden = !message;
+}
+async function startLocal() {
+  if (state.localBusy) return;
+  state.localBusy = true;
+  updateLocal();
+  try {
+    if (!navigator.mediaDevices) throw new Error("此浏览器不支持音频采集。");
+    const source = $("local-source").value;
+    const stream = await acquireStream(source);
+    const realtime = $("local-realtime").checked;
+    const scheme = location.protocol === "https:" ? "wss" : "ws";
+    const socket = new WebSocket(
+      `${scheme}://${location.host}/api/local/audio?source=${source}&realtime=${realtime}`,
+    );
+    socket.binaryType = "arraybuffer";
+    state.localSocket = socket;
+    state.localStream = stream;
+    await new Promise((resolve, reject) => {
+      socket.onerror = () => reject(new Error("录音连接失败，请检查浏览器权限。"));
+      socket.onclose = () => reject(new Error("录音连接已关闭。"));
+      socket.onopen = () => resolve();
+    });
+    const hello = await new Promise((resolve, reject) => {
+      socket.onerror = () => reject(new Error("录音连接失败。"));
+      socket.onclose = () => reject(new Error("录音连接已关闭。"));
+      socket.onmessage = (event) => resolve(JSON.parse(event.data));
+    });
+    if (hello.error) throw new Error(hello.error);
+    socket.onclose = () => { if (!state.localBusy) stopLocal(); };
+    socket.onerror = null;
+    socket.onmessage = (event) => {
+      const payload = JSON.parse(event.data);
+      if (payload.error) localNotice(payload.error);
+    };
+    state.localSessionId = hello.session_id;
+    resetLocalReport();
+    const links = downloads(`/api/sessions/${hello.session_id}/transcript`);
+    $("local-downloads").replaceChildren(...links.children);
+    $("local-downloads").hidden = false;
+    await startAudioStream(socket, stream);
+    const track = stream.getAudioTracks()[0];
+    if (track) track.onended = () => stopLocal();
+  } catch (error) {
+    localNotice(error.message);
+    await cleanupLocal();
+  } finally {
+    state.localBusy = false;
+    updateLocal();
+    await refresh(true);
+  }
+}
+async function stopLocal() {
+  if (state.localBusy) return;
+  state.localBusy = true;
+  updateLocal();
+  try { await cleanupLocal(); }
+  finally {
+    state.localBusy = false;
+    state.localSessionId = null;
+    updateLocal();
+    await refresh(true);
+  }
+}
+async function cleanupLocal() {
+  if (state.localSocket) {
+    try { state.localSocket.close(); } catch (error) { void error; }
+    state.localSocket = null;
+  }
+  if (state.localStream) {
+    for (const track of state.localStream.getTracks()) track.stop();
+    state.localStream = null;
+  }
+  if (state.localContext) {
+    try { await state.localContext.close(); } catch (error) { void error; }
+    state.localContext = null;
+  }
+}
+function updateLocal() {
+  const data = state.monitor || {};
+  const local = data.mode === "local";
+  const busyElsewhere = !!data.enabled && !local;
+  $("local-toggle").disabled = state.localBusy;
+  $("local-toggle").textContent = state.localBusy
+    ? "处理中…"
+    : local ? "停止录音" : "开启录音";
+  $("local-source").disabled = state.localBusy || local || busyElsewhere;
+  $("local-realtime").disabled = state.localBusy || local || busyElsewhere;
+  if (local) $("local-realtime").checked = data.realtime_analysis;
+  $("local-state").textContent = busyElsewhere ? "其他任务运行中" : labels[data.state] || "未录音";
+  $("local-state").className = `badge ${local ? data.state : "stopped"}`;
+  $("local-title").textContent = local ? data.title || "本机录音" : "未开始";
+  $("local-status-text").textContent = local
+    ? (data.last_audio_at ? `正在采集 · 最近 ${clock(data.last_audio_at)}` : "正在等待音频…")
+    : busyElsewhere
+      ? "请先停止直播间守卫。"
+      : "点击“开启录音”开始采集本机音频。";
+  $("local-dot").className = `connection-dot ${local ? data.state : "stopped"}`;
+  $("local-duration").textContent = local ? duration(data.captured_seconds) : "00:00:00";
+  $("local-count").replaceChildren(
+    document.createTextNode(`${local ? data.segment_count : 0} `), node("small", "段"),
+  );
+  $("local-last").textContent = local ? clock(data.last_audio_at) : "—";
+}
+$("local-toggle").onclick = () => {
+  const local = state.monitor && state.monitor.mode === "local";
+  return (local ? stopLocal() : startLocal()).catch((error) => localNotice(error.message));
+};
 async function refresh(force = false) {
   if (state.refreshRunning) return;
   state.refreshRunning = true;
@@ -549,11 +756,20 @@ async function refresh(force = false) {
     const [monitor, global] = await Promise.all([api("/api/monitor"), api("/api/analysis/status")]);
     state.connected = true;
     renderMonitor(monitor);
+    updateLocal();
     $("analysis-global").textContent = global.models.ready ? (global.worker_state === "processing" ? "模型正在分析音频" : "模型已就绪") : "模型尚未就绪，录音可继续";
     $("model-hint").textContent = global.last_error || global.models.reason || "本地运行：Community-1 人物判断 + Paraformer 普通话转写。分段分析会有处理延迟。";
     if (force || state.tick++ % 5 === 0) await loadSessions();
     if (state.route === "home") {
       for (const view of state.sessions.values()) if (view.root.isConnected && view.root.open) await loadSession(view);
+      if (monitor.mode === "local" && monitor.session_id && state.localReport) {
+        if (state.localReportId !== monitor.session_id) {
+          state.localReportId = monitor.session_id;
+          state.localReport.path = `/api/sessions/${monitor.session_id}/utterances?`;
+          resetLocalReport();
+        }
+        await loadReport(state.localReport);
+      }
     }
     await loadQueue();
   } catch (error) {
@@ -633,6 +849,8 @@ document.addEventListener("keydown", (event) => {
   }
 });
 window.addEventListener("hashchange", route);
+state.localReport = createReport("", "音频接收时间（北京时间）；人物编号在本场次内有效。");
+$("local-report").append(state.localReport.root);
 route();
 refresh(true);
 setInterval(() => refresh(), 2000);

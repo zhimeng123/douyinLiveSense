@@ -7,6 +7,7 @@ dependencies = [
     "fastapi>=0.115,<1",
     "uvicorn>=0.34,<1",
     "streamget==4.0.10",
+    "websockets>=13,<18",
 ]
 
 [project.optional-dependencies]

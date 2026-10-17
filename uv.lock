@@ -421,6 +421,7 @@ dependencies = [
     { name = "fastapi" },
     { name = "streamget" },
     { name = "uvicorn" },
+    { name = "websockets" },
 ]
 
 [package.optional-dependencies]
@@ -454,6 +455,7 @@ requires-dist = [
     { name = "torchcodec", marker = "extra == 'analysis'", specifier = "==0.8.0" },
     { name = "transformers", marker = "extra == 'analysis'", specifier = ">=4.48,<5" },
     { name = "uvicorn", specifier = ">=0.34,<1" },
+    { name = "websockets", specifier = ">=13,<18" },
 ]
 provides-extras = ["analysis"]
 

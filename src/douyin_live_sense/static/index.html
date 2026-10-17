@@ -94,6 +94,49 @@
           ><span id="save-path" title="音频保存目录"></span>
         </div>
       </section>
+      <section class="monitor-card" aria-labelledby="local-heading">
+        <div class="card-heading">
+          <h2 id="local-heading">本机录音</h2>
+          <span id="local-state" class="badge" aria-live="polite">未录音</span>
+        </div>
+        <form id="local-form">
+          <label for="local-source">录音来源</label>
+          <div class="input-row">
+            <select id="local-source">
+              <option value="microphone">麦克风输入</option>
+              <option value="system">系统声音（标签页 / 屏幕音频）</option>
+            </select>
+            <button id="local-toggle" type="button" class="primary">
+              开启录音 <span>●</span>
+            </button>
+          </div>
+          <label class="analysis-switch" for="local-realtime">
+            <input id="local-realtime" type="checkbox" /> 实时生成普通话记录
+            <small>采集本机音频并复用现有分析管道；关闭标签页即停止。</small>
+          </label>
+          <p id="local-hint" class="subtle">
+            选择“系统声音”时，请在浏览器弹窗中勾选“分享音频”，并保持本标签页打开。
+          </p>
+        </form>
+        <div id="local-notice" class="notice" role="alert" hidden></div>
+        <div class="live-summary">
+          <span id="local-dot" class="connection-dot"></span>
+          <div>
+            <strong id="local-title">未开始</strong>
+            <p id="local-status-text">点击“开启录音”开始采集本机音频。</p>
+          </div>
+        </div>
+        <div class="metrics">
+          <div><span>已采集时长</span><strong id="local-duration">00:00:00</strong></div>
+          <div><span>已保存音频段</span><strong id="local-count">0 <small>段</small></strong></div>
+          <div><span>最近收到音频</span><strong id="local-last" class="time-value">—</strong></div>
+        </div>
+        <div class="transcript-heading local-report-heading">
+          <h3>实时分析</h3>
+          <div id="local-downloads" class="transcript-downloads" hidden></div>
+        </div>
+        <div id="local-report" class="local-report"></div>
+      </section>
       <section class="analysis-summary" aria-label="分析状态">
         <div class="transcript-heading"><h2>本地分析</h2>
           <button id="analyse-current" class="secondary" disabled>分析当前场次全部切片</button>

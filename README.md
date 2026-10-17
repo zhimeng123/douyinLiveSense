@@ -9,48 +9,46 @@
 | 功能 | 当前行为 |
 | --- | --- |
 | 直播守卫 | 未开播时等待，下播后等待下一场；断线自动重新获取播放地址并重连 |
-| 音频档案 | 按直播场次保存 WAV，支持场次与任意切片独立展开、回听和下载 |
+| 本机录音 | 采集本机系统声音或麦克风，复用同一分析管道，实时展示并导出文档 |
+| 音频档案 | 按场次保存 WAV，支持场次与任意切片独立展开、回听和下载 |
 | 整场分析 | 手动请求本场全部已保存切片，或开启实时分析持续追加 |
 | 单片复核 | 单独分析或重新分析一个切片，保存独立版本 |
 | 分析队列 | 每个整场分析或单片复核请求有一条进度记录，可展开查看切片状态 |
+| 人物编号 | 场次内按音色聚类，跨切片、断线重连与补分析保持一致；不同场次各自独立 |
 | 文本记录 | 按时间排序，支持逐句回听及 TXT、Markdown、JSONL 下载 |
+| 重启恢复 | 服务重启后恢复守卫、实时开关与未完成任务，并修复未完成音频 |
+| 一键准备与启动 | `scripts/setup.sh` 下载模型做准备工作，`scripts/run.sh` 启动服务 |
 
 ## 快速开始
 
 当前开发与真实模型验证环境为 macOS。需要 **Python 3.11、[uv](https://docs.astral.sh/uv/) 和 FFmpeg**。项目用 `.python-version` 选择 Python 3.11，用 `uv.lock` 固定依赖。
 
-### 1. 安装依赖并创建配置
+### 1. 一键准备
 
-在项目根目录执行：
+克隆项目后，在项目根目录执行：
 
 ```sh
-# macOS：如果尚未安装 FFmpeg
-brew install ffmpeg
-
-uv sync --locked --extra analysis
-test -f .env || cp .env.example .env
+./scripts/setup.sh
 ```
 
-配置文件位于**项目根目录的 `.env`**，模板为 [.env.example](.env.example)。程序通过环境变量读取配置；下面的启动命令使用 `--env-file .env` 加载它。
+脚本按顺序完成准备工作：检查 `uv` 与 FFmpeg → `uv sync --locked --extra analysis` 安装依赖 → 缺少 `.env` 时从 [.env.example](.env.example) 生成 → 运行 `prepare-models` 下载并校验本地模型。首次需要联网，并为依赖与模型预留数 GB 空间。
 
-### 2. 准备本地模型
+模型分两类：
 
-登录 Hugging Face，在 [Community-1 模型页面](https://huggingface.co/pyannote/speaker-diarization-community-1) 接受使用条款，然后在 `.env` 填写 `HF_TOKEN`。
-
-选择 **Read / readonly** 权限即可；细粒度 Token 需允许读取该受限模型。下载不需要 Write 或 Inference 权限。真实 Token 和 Cookie 应只保存在本地配置中。
+- **普通话转写与标点**（`funasr/paraformer-zh`、`ct-punc`）：无需授权，直接下载。
+- **人物判断**（`pyannote/speaker-diarization-community-1`）：受限模型，需要先在 [Community-1 模型页面](https://huggingface.co/pyannote/speaker-diarization-community-1) 登录并接受使用条款，再创建 Token 填入 `.env`。选择 **Read / readonly** 权限即可；细粒度 Token 需允许读取该受限模型，下载不需要 Write 或 Inference 权限。检测不到 Token 时脚本会打印上述步骤并退出，不会静默跳过，以免误以为模型已全部就绪。
 
 ```sh
-uv run --locked --extra analysis --env-file .env douyin-live-sense prepare-models
+# 暂时只用普通话转写与标点模型
+./scripts/setup.sh --asr-only
 ```
 
-首次准备需要联网，并为依赖与模型预留数 GB 空间。命令固定模型的完整 revision、保存文件 SHA256；再次执行会验证并复用已有文件，修复缺失或损坏的文件。全部模型准备好后，运行分析使用本地文件，不再需要 Token。
+模型准备固定完整 revision 并保存文件 SHA256；再次执行会验证并复用已有文件，修复缺失或损坏的文件。全部模型准备好后，运行分析使用本地文件，不再需要 Token。`--asr-only` 跳过人物判断模型，完整人物标记仍需全部模型就绪。
 
-`prepare-models --asr-only` 仅准备普通话转写和标点模型；完整的人物标记仍需全部模型就绪。
-
-### 3. 启动网页
+### 2. 启动服务
 
 ```sh
-uv run --locked --extra analysis --env-file .env douyin-live-sense
+./scripts/run.sh
 ```
 
 打开 [http://127.0.0.1:8787](http://127.0.0.1:8787)。服务仅监听本机地址，同一数据目录只允许一个服务实例运行。
@@ -65,6 +63,22 @@ https://live.douyin.com/?live_web_rid=123456789
 
 关闭网页后后台仍会采集，但终端中的服务需要保持运行。点击网页“停止”会保存尾段并关闭守卫；终端按 `Ctrl+C` 会保存尾段并退出服务，同时保留守卫设置，下次启动自动恢复。
 
+### 手动步骤（等价于脚本）
+
+不使用脚本时，上面的准备与启动对应以下命令：
+
+```sh
+# macOS：如果尚未安装 FFmpeg
+brew install ffmpeg
+
+uv sync --locked --extra analysis
+test -f .env || cp .env.example .env
+uv run --locked --extra analysis --env-file .env douyin-live-sense prepare-models
+uv run --locked --extra analysis --env-file .env douyin-live-sense
+```
+
+配置文件位于**项目根目录的 `.env`**，模板为 [.env.example](.env.example)。程序通过环境变量读取配置；启动命令使用 `--env-file .env` 加载它。真实 Token 和 Cookie 应只保存在本地配置中。
+
 ### 仅采集音频
 
 采集不依赖分析模型，可跳过模型准备，用下面的命令安装和运行：
@@ -76,6 +90,15 @@ uv run --locked --env-file .env douyin-live-sense
 ```
 
 之后使用分析功能时，重新执行 `uv sync --locked --extra analysis`，并在运行命令中保留 `--extra analysis`，避免 uv 同步时卸载可选分析依赖。
+
+### 本机录音
+
+不监听抖音，直接采集本机音频时，打开网页在“本机录音”卡片选择来源：
+
+- **系统声音**：浏览器弹窗中选择标签页或屏幕，并勾选“分享音频”。macOS 上通常只能分享浏览器提供的标签页/应用音频；采集整机系统声音可能需要在系统中安装回环设备。
+- **麦克风**：选择麦克风输入。
+
+点击“开启录音”开始，页面实时显示发言并生成 TXT、Markdown、JSONL 文档；再次点击“停止录音”结束本次采集。本机录音与抖音守卫互斥，一次只能运行一个；录音期间需保持本标签页打开（后台标签页仍会采集音频，关闭标签页即停止）。本机录音不随服务重启自动恢复。
 
 ## 配置与模型
 
@@ -192,13 +215,15 @@ data/
 
 | 模块 | 职责 |
 | --- | --- |
-| `source.py`、`monitor.py` | 直播状态与地址解析、守卫、重连和场次管理 |
+| `source.py`、`monitor.py` | 直播状态与地址解析、守卫、重连和场次管理；`monitor.py` 同时提供本机录音模式 |
+| `local_capture`（浏览器端） | 浏览器 WebAudio 采集 → WebSocket PCM → 复用切段与分析管道 |
 | `audio.py`、`storage.py` | 按采样切段、原子落盘、采集索引与恢复 |
 | `analysis.py`、`analysis_worker.py` | 分析调度、可复用模型子进程 |
 | `providers.py`、`models.py` | 人物判断/转写适配器、模型准备与版本配置 |
 | `analysis_storage.py`、`analysis_audio.py` | 请求、人物和发言持久化，窗口上下文与音频来源 |
 | `transcripts.py` | 按时间排序并原子导出文档 |
 | `app.py`、`static/` | 本机 HTTP API、网页及轮询 |
+| `scripts/` | 一键准备模型（`setup.sh`）与启动服务（`run.sh`） |
 
 人物判断与转写通过 `DiarizationProvider`、`TranscriptionProvider` 分别接入，使用采样位置、窗口内标签和纯数据结果。更换模型主要调整适配器与模型配置，采集、队列和文档可以复用；仍需验证时间戳、标签语义和重叠行为。更换声纹模型需要新的向量命名空间和分析版本。
 
@@ -213,6 +238,7 @@ data/
 | `GET /api/monitor` | 守卫状态、主播、采集时长及最近错误 |
 | `POST /api/monitor/start` | 开始；`{"room":"123456789","realtime_analysis":false}` |
 | `POST /api/monitor/stop` | 停止并保存尾段 |
+| `WS /api/local/audio` | 本机录音；`?source=system\|microphone&realtime=true`，浏览器推送 16 kHz PCM，连接即开始、断开即结束 |
 | `GET /api/sessions`、`GET /api/sessions/{id}` | 场次列表与详情 |
 | `GET /api/sessions/{id}/segments`、`GET /api/sessions/{id}/events` | 已完成分段与采集事件 |
 | `GET /api/segments/{id}/audio` | 回听 WAV，支持 HTTP Range；`download=true` 下载 |

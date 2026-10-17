@@ -1,8 +1,9 @@
+import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -104,6 +105,58 @@ def create_app(
             app.state.analysis.request(previous["session_id"])
         app.state.analysis.sync_live()
         return result
+
+    @app.websocket("/api/local/audio")
+    async def local_audio(websocket: WebSocket):
+        origin = websocket.headers.get("origin")
+        host = websocket.headers.get("host", "")
+        if origin and origin != f"http://{host}":
+            await websocket.close(code=1008)
+            return
+        source = websocket.query_params.get("source", "microphone")
+        realtime = websocket.query_params.get("realtime", "false") == "true"
+        await websocket.accept()
+        try:
+            status = await app.state.monitor.start_local(source, realtime)
+        except (MonitorConflict, ValueError) as error:
+            await websocket.send_json({"error": str(error)})
+            await websocket.close()
+            return
+        await websocket.send_json({"session_id": status["session_id"], "source": status["source"]})
+        app.state.analysis.sync_live()
+        error_message = None
+        try:
+            while True:
+                try:
+                    message = await asyncio.wait_for(
+                        websocket.receive(), app.state.monitor.settings.idle_seconds
+                    )
+                except TimeoutError:
+                    error_message = "长时间未收到音频，已结束本机录音。"
+                    break
+                if message["type"] == "websocket.disconnect":
+                    break
+                data = message.get("bytes")
+                if data:
+                    try:
+                        app.state.monitor.feed_local(data)
+                    except NeedsAttention as error:
+                        error_message = str(error)
+                        break
+        except WebSocketDisconnect:
+            pass
+        finally:
+            previous = app.state.monitor.status()
+            await app.state.monitor.stop_local("stopped")
+            app.state.analysis.sync_live()
+            if previous["realtime_analysis"] and previous["session_id"]:
+                app.state.analysis.request(previous["session_id"])
+            if error_message:
+                try:
+                    await websocket.send_json({"error": error_message})
+                    await websocket.close()
+                except (RuntimeError, WebSocketDisconnect):
+                    pass
 
     @app.get("/api/analysis/status")
     async def get_analysis_status():

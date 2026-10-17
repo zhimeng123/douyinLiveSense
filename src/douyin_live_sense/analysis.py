@@ -156,7 +156,7 @@ class AnalysisService:
     async def set_realtime(self, enabled: bool) -> dict:
         async with self.monitor.lock:
             if not self.monitor.enabled:
-                raise MonitorConflict("请先开启守卫，再切换实时分析。")
+                raise MonitorConflict("请先开启监听或本机录音，再切换实时分析。")
             self.monitor.store.set_realtime(enabled)
             if self.monitor.session:
                 self.request(self.monitor.session["id"])

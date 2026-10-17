@@ -7,7 +7,7 @@ from .audio import FFmpegCapture, SegmentWriter
 from .config import Settings
 from .security import redact
 from .source import DouyinSource, LiveSource, NeedsAttention, SourceError, normalize_room
-from .storage import Storage
+from .storage import Storage, utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -42,11 +42,14 @@ class Monitor:
         self.retry_deadline: float | None = None
         self.writer: SegmentWriter | None = None
         self.retry_index = 0
+        self.mode: str | None = None
+        self.local_source: str | None = None
 
     async def restore(self) -> None:
         for failure in self.store.recover():
             logger.error("音频恢复失败: %s", failure)
         self.store.close_stale_epochs()
+        self.store.finish_local_sessions("service_restart")
         guard = self.store.guard()
         if guard["enabled"] and guard["room_id"]:
             await self.start(guard["room_id"], bool(guard["realtime_analysis"]))
@@ -69,6 +72,8 @@ class Monitor:
             self.last_audio_at = None
             self.last_error = None
             self.retry_index = 0
+            self.mode = "douyin"
+            self.local_source = None
             self.enabled = True
             self.state = "checking"
             self.store.set_guard(room_id, True)
@@ -84,6 +89,8 @@ class Monitor:
 
     async def stop(self) -> dict:
         async with self.lock:
+            if self.mode == "local":
+                return self._finish_local("stopped")
             self.enabled = False
             self.store.set_guard(self.room_id, False)
             await self._cancel_task()
@@ -93,8 +100,67 @@ class Monitor:
             self.last_error = None
             return self.status()
 
+    async def start_local(self, source: str, realtime_analysis: bool = False) -> dict:
+        if source not in {"system", "microphone"}:
+            raise ValueError("未知的录音来源。")
+        async with self.lock:
+            if self.enabled:
+                raise MonitorConflict("正在监听或录音，请先停止当前任务。")
+            self.room_id = "local"
+            self.local_source = source
+            self.mode = "local"
+            self.session = self.store.create_session(
+                "local", source, "本机录音", "系统声音" if source == "system" else "麦克风输入"
+            )
+            self.anchor_name = self.session["anchor_name"]
+            self.title = self.session["title"]
+            self.last_audio_at = None
+            self.last_error = None
+            self.retry_index = 0
+            self.enabled = True
+            self.state = "recording"
+            self.store.set_realtime(realtime_analysis)
+            self.store.set_guard("local", False)
+            self.writer = SegmentWriter(self.store, self.settings, self.session["id"])
+            return self.status()
+
+    def feed_local(self, pcm: bytes) -> None:
+        if self.mode != "local" or not self.enabled or self.writer is None:
+            raise MonitorConflict("本机录音未在运行。")
+        if self.state != "recording":
+            self.store.close_gap(self.session["id"], utc_now())
+        now = utc_now()
+        self.state = "recording"
+        self.writer.feed(pcm, now)
+        self.last_audio_at = now
+        self.last_error = None
+
+    async def stop_local(self, reason: str = "stopped") -> dict:
+        async with self.lock:
+            if self.mode != "local":
+                return self.status()
+            return self._finish_local(reason)
+
+    def _finish_local(self, reason: str) -> dict:
+        if self.writer:
+            self.writer.close()
+            self.writer = None
+        if self.session:
+            self.store.finish_session(self.session["id"], reason)
+            self.session = None
+        self.enabled = False
+        self.mode = None
+        self.local_source = None
+        self.state = "stopped"
+        self.last_error = None
+        self.store.set_realtime(False)
+        return self.status()
+
     async def shutdown(self) -> None:
         async with self.lock:
+            if self.mode == "local":
+                self._finish_local("stopped")
+                return
             await self._cancel_task()
             if self.enabled and self.session:
                 self.store.open_gap(
@@ -217,6 +283,8 @@ class Monitor:
         return {
             "state": self.state,
             "enabled": self.enabled,
+            "mode": self.mode,
+            "source": self.local_source,
             "realtime_analysis": bool(self.store.guard()["realtime_analysis"]),
             "room_id": self.room_id,
             "anchor_name": self.anchor_name,

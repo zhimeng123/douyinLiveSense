@@ -175,6 +175,26 @@ input:focus {
   outline: 2px solid #51816b;
   outline-offset: 1px;
 }
+select {
+  flex: 1;
+  min-width: 0;
+  padding: 14px 16px;
+  background: #f8faf6;
+  border: 1px solid #dbe3d9;
+  border-radius: 8px;
+  font-size: 14px;
+  color: #283f35;
+}
+select:focus {
+  outline: 2px solid #51816b;
+  outline-offset: 1px;
+}
+.local-report-heading {
+  padding: 20px 30px 8px;
+}
+.local-report {
+  padding: 0 30px 26px;
+}
 .primary,
 .secondary {
   padding: 12px 20px;

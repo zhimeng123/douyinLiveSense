@@ -216,6 +216,13 @@ class Storage:
                 (now, session_id),
             )
 
+    def finish_local_sessions(self, reason: str) -> None:
+        rows = self.db.execute(
+            "SELECT id FROM sessions WHERE room_id='local' AND ended_at IS NULL"
+        ).fetchall()
+        for row in rows:
+            self.finish_session(row["id"], reason)
+
     def sessions(self, limit: int = 50, offset: int = 0) -> list[dict]:
         rows = self.db.execute(
             "SELECT s.*, COUNT(g.id) AS segment_count, "

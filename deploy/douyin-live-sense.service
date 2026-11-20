@@ -1,0 +1,19 @@
+[Unit]
+Description=ValuSense Douyin Live Sense
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# 修改为专用服务用户和项目目录，不要使用 root。
+User=douyin-live-sense
+WorkingDirectory=/opt/douyinLiveSense
+EnvironmentFile=/opt/douyinLiveSense/.env
+ExecStart=/bin/bash -lc './scripts/run.sh'
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,6 +1,6 @@
 # ValuSense · 抖音直播监听与普通话记录
 
-在本机监听一个抖音直播间，完整保存分段音频，并生成带**音频接收时间、人物音色编号和讲话内容**的中文普通话记录。支持手动分析历史录音，也支持监听时持续分析；中途开启实时分析，会先补齐本场已保存但尚未分析的音频。
+在本机监听一个抖音直播间，完整保存分段音频。项目默认是**仅录音**，不要求 Hugging Face Token，也不会自动下载模型；登录网页后，用户可以显式开启完整识别，生成带**音频接收时间、人物音色编号和讲话内容**的中文普通话记录。
 
 网页、数据库、录音和分析模型均在本机运行。项目的 Python 包名和启动命令为 `douyin-live-sense`。
 
@@ -17,11 +17,11 @@
 | 人物编号 | 场次内按音色聚类，跨切片、断线重连与补分析保持一致；不同场次各自独立 |
 | 文本记录 | 按时间排序，支持逐句回听及 TXT、Markdown、JSONL 下载 |
 | 重启恢复 | 服务重启后恢复守卫、实时开关与未完成任务，并修复未完成音频 |
-| 一键准备与启动 | `scripts/setup.sh` 下载模型做准备工作，`scripts/run.sh` 启动服务 |
+| 一键准备与启动 | `scripts/setup.sh` 安装依赖并初始化登录，`scripts/run.sh` 启动服务 |
 
 ## 快速开始
 
-当前开发与真实模型验证环境为 macOS。需要 **Python 3.11、[uv](https://docs.astral.sh/uv/) 和 FFmpeg**。项目用 `.python-version` 选择 Python 3.11，用 `uv.lock` 固定依赖。
+需要 **Python 3.11、[uv](https://docs.astral.sh/uv/) 和 FFmpeg**。项目用 `.python-version` 选择 Python 3.11，用 `uv.lock` 固定依赖。安装脚本默认只安装核心录音依赖；macOS ARM64 和 Linux x86_64 可安装分析扩展，Linux ARM64 保持仅录音。
 
 ### 1. 一键准备
 
@@ -31,19 +31,9 @@ cd douyinLiveSense
 ./scripts/setup.sh
 ```
 
-脚本按顺序完成准备工作：检查 `uv` 与 FFmpeg → `uv sync --locked --extra analysis` 安装依赖 → 缺少 `.env` 时从 [.env.example](.env.example) 生成 → 运行 `prepare-models` 下载并校验本地模型。首次需要联网，并为依赖与模型预留数 GB 空间。
+脚本按顺序完成准备工作：检查 `uv` 与 FFmpeg → 安装核心依赖（平台支持时同时安装分析扩展）→ 缺少 `.env` 时从 [.env.example](.env.example) 生成 → 初始化管理员密码。首次密码只在终端打印一次，磁盘只保存安全哈希。
 
-模型分两类：
-
-- **普通话转写与标点**（`funasr/paraformer-zh`、`ct-punc`）：无需授权，直接下载。
-- **人物判断**（`pyannote/speaker-diarization-community-1`）：受限模型，需要先在 [Community-1 模型页面](https://huggingface.co/pyannote/speaker-diarization-community-1) 登录并接受使用条款，再创建 Token 填入 `.env`。选择 **Read / readonly** 权限即可；细粒度 Token 需允许读取该受限模型，下载不需要 Write 或 Inference 权限。检测不到 Token 时脚本会打印上述步骤并退出，不会静默跳过，以免误以为模型已全部就绪。
-
-```sh
-# 暂时只用普通话转写与标点模型
-./scripts/setup.sh --asr-only
-```
-
-模型准备固定完整 revision 并保存文件 SHA256；再次执行会验证并复用已有文件，修复缺失或损坏的文件。全部模型准备好后，运行分析使用本地文件，不再需要 Token。`--asr-only` 跳过人物判断模型，完整人物标记仍需全部模型就绪。
+完整识别模型在网页的“语音识别”卡片中配置。这样模型不会在首次 clone 或启动时自动下载。
 
 ### 2. 启动服务
 
@@ -51,7 +41,7 @@ cd douyinLiveSense
 ./scripts/run.sh
 ```
 
-打开 [http://127.0.0.1:8787](http://127.0.0.1:8787)。服务仅监听本机地址，同一数据目录只允许一个服务实例运行。
+打开 [http://127.0.0.1:8787](http://127.0.0.1:8787)，使用初始化时打印的管理员密码登录。服务默认仅监听本机地址，同一数据目录只允许一个服务实例运行。
 
 输入房间 ID 或链接，点击“开启守卫”。以下输入会识别为同一房间：
 
@@ -63,6 +53,17 @@ https://live.douyin.com/?live_web_rid=123456789
 
 关闭网页后后台仍会采集，但终端中的服务需要保持运行。点击网页“停止”会保存尾段并关闭守卫；终端按 `Ctrl+C` 会保存尾段并退出服务，同时保留守卫设置，下次启动自动恢复。
 
+### 开启完整识别
+
+登录后打开“语音识别”卡片，输入 Hugging Face 只读 Token，先在 [Community-1 模型页面](https://huggingface.co/pyannote/speaker-diarization-community-1) 接受条款，再点击下载缺失模型。下载完成后打开“完整识别”开关。Token 只保存到服务端 `data/models/hf_token`，API 和日志不会返回明文。
+
+完整识别包括：
+
+- **普通话转写与标点**：`funasr/paraformer-zh`、`ct-punc`。
+- **人物判断**：`pyannote/speaker-diarization-community-1`，需要接受模型条款和只读 Token。
+
+下载失败会保留已完成文件；刷新页面或重启服务后可继续下载，页面每秒显示后台任务进度。关闭开关后恢复仅录音，不会删除已下载模型。
+
 ### 手动步骤（等价于脚本）
 
 不使用脚本时，上面的准备与启动对应以下命令：
@@ -73,8 +74,7 @@ brew install ffmpeg
 
 uv sync --locked --extra analysis
 test -f .env || cp .env.example .env
-uv run --locked --extra analysis --env-file .env douyin-live-sense prepare-models
-uv run --locked --extra analysis --env-file .env douyin-live-sense
+uv run --locked --env-file .env douyin-live-sense
 ```
 
 配置文件位于**项目根目录的 `.env`**，模板为 [.env.example](.env.example)。程序通过环境变量读取配置；启动命令使用 `--env-file .env` 加载它。真实 Token 和 Cookie 应只保存在本地配置中。
@@ -89,7 +89,7 @@ test -f .env || cp .env.example .env
 uv run --locked --env-file .env douyin-live-sense
 ```
 
-之后使用分析功能时，重新执行 `uv sync --locked --extra analysis`，并在运行命令中保留 `--extra analysis`，避免 uv 同步时卸载可选分析依赖。
+之后在 macOS ARM64 或 Linux x86_64 上使用分析功能时，执行 `uv sync --locked --extra analysis`，并在运行命令中保留 `--extra analysis`。Linux ARM64 仅支持录音。
 
 ### 本机录音
 
@@ -100,15 +100,22 @@ uv run --locked --env-file .env douyin-live-sense
 
 点击“开启录音”开始，页面实时显示发言并生成 TXT、Markdown、JSONL 文档；再次点击“停止录音”结束本次采集。本机录音与抖音守卫互斥，一次只能运行一个；录音期间需保持本标签页打开（后台标签页仍会采集音频，关闭标签页即停止）。本机录音不随服务重启自动恢复。
 
-## 配置与模型
+## 配置、认证与模型
 
 | 环境变量 | 默认值 | 用途 |
 | --- | --- | --- |
 | `DOUYIN_COOKIE` | 空 | 抖音提示登录或风控时提供自己的登录 Cookie |
-| `HF_TOKEN` | 空 | 首次下载受限的人物判断模型 |
 | `DLS_DATA_DIR` | 启动目录下的 `data/` | 数据、录音、模型及导出目录；建议使用绝对路径 |
 | `DLS_ANALYSIS_THREADS` | `4` | 分析进程 CPU 线程数 |
 | `DLS_DIARIZATION_DEVICE` | `auto` | 人物判断设备，可选 `auto`、`cpu`、`mps`、`cuda` |
+| `DLS_HOST` | `127.0.0.1` | HTTP 监听地址 |
+| `DLS_PORT` | `8787` | HTTP 监听端口 |
+| `DLS_ALLOWED_HOSTS` | `127.0.0.1,localhost` | Host 允许列表，反代域名必须加入 |
+| `DLS_TRUST_PROXY` | `false` | 信任 `X-Forwarded-Proto` / `X-Forwarded-For` |
+| `DLS_SECURE_COOKIES` | `auto` | Cookie 安全策略：`auto`、`always`、`never` |
+| `DLS_SESSION_DAYS` | `7` | 登录 Cookie 有效天数，范围 1–90 |
+| `DLS_ADMIN_PASSWORD` | 空 | 自动化部署时设置初始管理员密码；日常使用 CLI 初始化 |
+| `HF_TOKEN` | 空 | 高级回退，仅用于兼容已有环境；网页 Token 优先保存到 `data/models/hf_token` |
 
 默认尝试匿名获取直播。能否匿名访问取决于抖音的当前响应；明确的登录或风控错误会显示“需要处理”，普通网络故障继续重试。修改 Cookie 等运行配置后需要重启服务；若守卫因错误停止，再从网页开启。Cookie 不写入数据库或 API，应用日志隐藏 Cookie 和带签名的播放地址。
 
@@ -118,11 +125,13 @@ uv run --locked --env-file .env douyin-live-sense
 | 中文普通话转写 | `funasr/paraformer-zh` | FunASR 1.4.16 |
 | 中文标点 | `funasr/ct-punc` | FunASR 1.4.16 |
 
-实际模型 revision 和文件校验信息保存在 `data/models/manifest.json`。分析记录保存所用模型版本及判断参数。
+实际模型 revision 和文件校验信息保存在 `data/models/manifest.json`。分析记录保存所用模型版本及判断参数。磁盘约预留 **15 GB**，长期录音还需要额外音频空间。
 
 人物判断自动选择可用的 CUDA、Apple MPS 或 CPU；指定不可用设备会显示错误。普通话和标点模型使用 CPU。模型在独立子进程中加载并复用，分析任务串行执行；首次加载和补分析积压会增加等待时间。
 
 ## 分析使用方式
+
+默认是仅录音。只有“完整识别”开关开启且模型就绪后，实时分析、整场分析和单片复核按钮才会启用。
 
 ### 手动分析整场
 
@@ -139,6 +148,73 @@ uv run --locked --env-file .env douyin-live-sense
 关闭实时开关后，已经请求的内容继续处理，后续切片等待手动请求。实时开启时点击“停止”，会将最终尾段纳入分析；守卫继续等待下一场时，新场次也会自动分析。服务重启恢复守卫、实时开关与未完成任务；下一次手动开启守卫默认关闭实时分析。
 
 这是按音频切片和相邻上下文处理的实时记录，通常在切片保存后才生成文字，不保证逐字即时字幕。模型尚未准备时保留分析请求并提示原因，录音采集继续。
+
+## 部署方式
+
+应用只提供 HTTP；TLS、域名和公网暴露交给外部代理或隧道。不要直接把 8787 暴露到公网。
+
+### 本机（默认）
+
+```sh
+./scripts/setup.sh
+./scripts/run.sh
+```
+
+保持 `DLS_HOST=127.0.0.1`，访问 `http://127.0.0.1:8787`。这是最简单的部署方式。
+
+### 可信局域网
+
+在 `.env` 中显式监听局域网地址，并填写允许的 Host：
+
+```dotenv
+DLS_HOST=0.0.0.0
+DLS_ALLOWED_HOSTS=192.168.1.20,localhost,127.0.0.1
+```
+
+仅在可信网络或防火墙后使用；局域网部署仍然是 HTTP，不能替代 HTTPS。
+
+### 域名 + Caddy
+
+将 `DLS_HOST=127.0.0.1` 保持不变，并把域名加入 `DLS_ALLOWED_HOSTS`，同时启用代理协议识别：
+
+```dotenv
+DLS_ALLOWED_HOSTS=live.example.com,127.0.0.1,localhost
+DLS_TRUST_PROXY=true
+DLS_SECURE_COOKIES=auto
+```
+
+复制并修改 [deploy/Caddyfile.example](deploy/Caddyfile.example)，再让 Caddy 负责证书和反代。示例会自动把 WebSocket 升级转发到应用。
+
+### 无域名 tunnel
+
+Cloudflare Tunnel 或 Tailscale Serve/Funnel 可以把本机 HTTP 服务接到 HTTPS 入口。应用侧仍使用 `DLS_HOST=127.0.0.1`、`DLS_TRUST_PROXY=true`，并把 tunnel 提供的主机名加入 `DLS_ALLOWED_HOSTS`。例如 Tailscale：
+
+```sh
+./scripts/run.sh
+sudo tailscale serve --https=443 http://127.0.0.1:8787
+```
+
+公网 Funnel 还需要审慎设置访问控制；不要把管理员登录页当作唯一的网络边界。
+
+### systemd
+
+复制 [deploy/douyin-live-sense.service](deploy/douyin-live-sense.service)，修改 `User`、`WorkingDirectory` 和 `EnvironmentFile` 后安装：
+
+```sh
+sudo systemctl daemon-reload
+sudo systemctl enable --now douyin-live-sense
+sudo journalctl -u douyin-live-sense -f
+```
+
+Linux 安装 FFmpeg：Debian/Ubuntu 使用 `sudo apt update && sudo apt install -y ffmpeg`，Fedora 使用 `sudo dnf install -y ffmpeg`，Arch 使用 `sudo pacman -S ffmpeg`。Linux x86_64 支持完整识别；Linux ARM64 仅支持录音。分析依赖和模型约需 15 GB，录音空间另计。
+
+## 故障排查
+
+- **403 Host**：检查请求中的 Host 是否在 `DLS_ALLOWED_HOSTS`；反代域名、Tailscale 主机名都必须明确加入。
+- **登录成功后循环回登录页**：反代使用 HTTPS 时设置 `DLS_TRUST_PROXY=true`，确保代理发送 `X-Forwarded-Proto: https`；检查浏览器没有拦截 Secure Cookie。
+- **WebSocket 升级失败**：确认反代支持 `/api/local/audio` 的 WebSocket Upgrade。Caddy 自动处理；Nginx 需要显式设置 `Upgrade` 和 `Connection` 头，并保持同一 Host 配置。
+- **模型下载 401/403**：确认 Token 是只读 Token、已在 Community-1 页面接受条款，且没有把 Token 写进 URL、日志或公开配置；网页会把 Token 保存到服务端文件。
+- **Linux ARM64 无法安装分析依赖**：这是支持矩阵限制，应用会显示“Linux ARM64 仅支持录音”，请在 macOS ARM64 或 Linux x86_64 上启用完整识别。
 
 ### 单片分析与重新分析
 

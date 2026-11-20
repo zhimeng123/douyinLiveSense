@@ -87,8 +87,11 @@ class ProcessWorker:
 
 
 class AnalysisService:
-    def __init__(self, monitor: Monitor, settings: Settings, worker=None, readiness=None):
+    def __init__(
+        self, monitor: Monitor, settings: Settings, worker=None, readiness=None, preferences=None
+    ):
         self.monitor, self.settings = monitor, settings
+        self.preferences = preferences
         self.storage = AnalysisStorage(monitor.store)
         self.worker = worker or ProcessWorker(settings)
         self.readiness = readiness or (lambda: model_status(settings))
@@ -106,6 +109,8 @@ class AnalysisService:
         self.task = asyncio.create_task(self._run(), name="analysis-dispatcher")
 
     def sync_live(self) -> None:
+        if self.preferences and not self.preferences.enabled():
+            return
         guard = self.monitor.store.guard()
         session = self.monitor.session
         live_id = session["id"] if session and guard["realtime_analysis"] else None
@@ -116,6 +121,8 @@ class AnalysisService:
         self.previous_live_session = live_id
 
     def request(self, session_id: str, retry: bool = False) -> dict:
+        if self.preferences and not self.preferences.enabled():
+            return self.storage.status(session_id)
         self.storage.request(session_id, pipeline_config(self.settings), retry)
         self.wake.set()
         return self.storage.status(session_id)
@@ -123,6 +130,8 @@ class AnalysisService:
     def request_segment(
         self, segment_id: str, reanalyse: bool = False, retry: bool = False
     ) -> dict:
+        if self.preferences and not self.preferences.enabled():
+            return self.storage.segment_status(segment_id)
         self.storage.request_segment(segment_id, pipeline_config(self.settings), reanalyse, retry)
         self.wake.set()
         return self.storage.segment_status(segment_id)

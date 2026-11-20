@@ -2,7 +2,7 @@ import json
 from dataclasses import replace
 
 import pytest
-from conftest import FakeCapture, FakeSource
+from conftest import FakeCapture, FakeSource, login
 from fastapi.testclient import TestClient
 from test_analysis import FixtureWorker, SampleASR, SampleDiarizer, recording
 
@@ -146,7 +146,7 @@ def test_progress_record_and_clip_pagination(settings):
     store.close()
 
 
-def test_progress_api_and_validation(settings):
+def test_progress_api_and_validation(settings, auth):
     settings = replace(settings, segment_seconds=4)
     store, session, _, _ = recording(settings, [(0, 128_000)])
     monitor = Monitor(store, settings, FakeSource(), FakeCapture())
@@ -157,7 +157,10 @@ def test_progress_api_and_validation(settings):
         lambda: {"ready": False, "reason": "测试等待模型"},
     )
     run = service.storage.request(session["id"], pipeline_config(settings))
-    with TestClient(create_app(settings, monitor, service), base_url="http://127.0.0.1") as client:
+    with TestClient(
+        create_app(settings, monitor, service, auth=auth), base_url="http://127.0.0.1"
+    ) as client:
+        login(client)
         records = client.get("/api/analysis/requests").json()
         assert records["total_count"] == 1
         assert records["items"][0]["total_segments"] == 2

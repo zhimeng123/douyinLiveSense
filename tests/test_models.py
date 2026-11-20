@@ -1,4 +1,6 @@
 import json
+import os
+import stat
 import sys
 from dataclasses import replace
 from types import SimpleNamespace
@@ -6,7 +8,15 @@ from types import SimpleNamespace
 import pytest
 
 from douyin_live_sense.analysis_types import ModelsNotReady
-from douyin_live_sense.models import MODEL_REPOS, file_hash, model_status, prepare_models
+from douyin_live_sense.models import (
+    MODEL_REPOS,
+    file_hash,
+    model_status,
+    prepare_model,
+    prepare_models,
+    read_token,
+    write_token,
+)
 from douyin_live_sense.providers import diarization_device
 
 
@@ -34,6 +44,67 @@ def test_missing_weight_is_not_ready(settings, monkeypatch):
     (settings.data_dir / entries["asr"]["path"] / "model.bin").unlink()
     status = model_status(settings)
     assert not status["ready"] and "asr" in status["reason"]
+
+
+def test_component_status_separates_transcription_and_diarization(settings, monkeypatch):
+    entries = prepared(settings)
+    monkeypatch.setattr("importlib.util.find_spec", lambda _: object())
+    (settings.data_dir / entries["diarization"]["path"] / "model.bin").unlink()
+    status = model_status(settings)
+    assert status["components"]["transcription"]["ready"] is True
+    assert status["components"]["diarization"]["ready"] is False
+    assert status["components"]["diarization"]["missing"] == ["diarization"]
+
+
+def test_token_file_takes_precedence(settings, monkeypatch):
+    monkeypatch.setenv("HF_TOKEN", "env-token")
+    write_token(settings, "  file-token  ")
+    token_path = settings.data_dir / "models" / "hf_token"
+    assert read_token(settings) == "file-token"
+    assert stat.S_IMODE(token_path.stat().st_mode) == 0o600
+
+
+def test_token_file_is_created_restrictively_when_replacing_existing_file(settings, monkeypatch):
+    token_path = settings.data_dir / "models" / "hf_token"
+    token_path.parent.mkdir(parents=True)
+    token_path.write_text("old-token")
+    token_path.chmod(0o644)
+    real_replace = os.replace
+    observed = {}
+
+    def inspect_replace(source, destination):
+        observed["temporary_mode"] = stat.S_IMODE(os.stat(source).st_mode)
+        observed["old_token_preserved"] = token_path.read_text() == "old-token"
+        real_replace(source, destination)
+
+    monkeypatch.setattr("douyin_live_sense.models.os.replace", inspect_replace)
+
+    write_token(settings, "new-token")
+
+    assert observed == {"temporary_mode": 0o600, "old_token_preserved": True}
+    assert token_path.read_text() == "new-token"
+    assert stat.S_IMODE(token_path.stat().st_mode) == 0o600
+
+
+def test_prepare_one_model_only_writes_its_manifest_entry(settings, monkeypatch):
+    calls = []
+
+    def download(repo, **kwargs):
+        calls.append(repo)
+        target = kwargs["local_dir"]
+        target.mkdir(parents=True, exist_ok=True)
+        (target / "config.yaml").write_text("cfg")
+        (target / "model.bin").write_bytes(b"w")
+
+    hub = SimpleNamespace(
+        HfApi=lambda **kw: SimpleNamespace(model_info=lambda repo: SimpleNamespace(sha="rev")),
+        snapshot_download=download,
+    )
+    monkeypatch.setitem(sys.modules, "huggingface_hub", hub)
+    prepare_model(settings, "asr", token=None)
+    manifest = json.loads((settings.data_dir / "models" / "manifest.json").read_text())
+    assert set(manifest["models"]) == {"asr"}
+    assert calls == [MODEL_REPOS["asr"]]
 
 
 def test_prepared_models_reuse_without_token_or_network(settings, monkeypatch):

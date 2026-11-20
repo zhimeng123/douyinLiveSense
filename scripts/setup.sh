@@ -1,30 +1,75 @@
 #!/usr/bin/env bash
-# 一键准备：同步依赖、生成配置、下载并校验本地分析模型。
-#
-#   ./scripts/setup.sh              完整准备（含人物判断模型，需要 HF_TOKEN）
-#   ./scripts/setup.sh --asr-only   只准备普通话转写与标点模型
-#   ./scripts/setup.sh --help       查看说明
+# Prepare dependencies and initialize the single administrator password.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-asr_only=0
-for arg in "$@"; do
-  case "$arg" in
-    --asr-only)
-      asr_only=1
+record_only=0
+check_only=0
+password_arg=()
+
+usage() {
+  cat <<'EOF'
+用法：./scripts/setup.sh [--record-only] [--check] [--password TEXT]
+
+默认安装核心依赖和当前平台支持的分析依赖，但不下载模型。
+--record-only 只安装核心录音依赖。
+--check        只显示平台和安装模式，不修改环境。
+--password     设置初始管理员密码。
+EOF
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --record-only)
+      record_only=1
+      shift
+      ;;
+    --check)
+      check_only=1
+      shift
+      ;;
+    --password)
+      if [ "$#" -lt 2 ]; then
+        echo "--password 需要一个值。" >&2
+        exit 2
+      fi
+      password_arg=(--password "$2")
+      shift 2
       ;;
     -h | --help)
-      sed -n '2,6p' "$0" | sed 's/^# \{0,1\}//'
+      usage
       exit 0
       ;;
     *)
-      echo "未知参数：$arg" >&2
-      echo "用法：./scripts/setup.sh [--asr-only]" >&2
+      echo "未知参数：$1" >&2
+      usage >&2
       exit 2
       ;;
   esac
 done
+
+system="$(uname -s)"
+arch="$(uname -m)"
+analysis=1
+analysis_reason=""
+if [ "$system" = "Linux" ] && { [ "$arch" = "aarch64" ] || [ "$arch" = "arm64" ]; }; then
+  analysis=0
+  analysis_reason="Linux ARM64 缺少 torchcodec"
+fi
+if [ "$record_only" -eq 1 ]; then
+  analysis=0
+  analysis_reason="用户选择仅录音"
+fi
+
+if [ "$check_only" -eq 1 ]; then
+  if [ "$analysis" -eq 1 ]; then
+    echo "安装模式：完整识别"
+  else
+    echo "安装模式：仅录音（${analysis_reason:-平台不支持完整识别}）"
+  fi
+  exit 0
+fi
 
 if ! command -v uv >/dev/null 2>&1; then
   cat >&2 <<'EOF'
@@ -36,57 +81,36 @@ EOF
 fi
 
 if ! command -v ffmpeg >/dev/null 2>&1; then
-  cat >&2 <<'EOF'
-未找到 FFmpeg。直播采集依赖它持续解码音频。
-  macOS：brew install ffmpeg
-EOF
+  echo "未找到 FFmpeg。直播采集依赖它持续解码音频。" >&2
+  case "$system" in
+    Darwin) echo "  macOS：brew install ffmpeg" >&2 ;;
+    Linux)
+      if command -v apt-get >/dev/null 2>&1; then
+        echo "  Debian/Ubuntu：sudo apt update && sudo apt install -y ffmpeg" >&2
+      elif command -v dnf >/dev/null 2>&1; then
+        echo "  Fedora：sudo dnf install -y ffmpeg" >&2
+      elif command -v pacman >/dev/null 2>&1; then
+        echo "  Arch：sudo pacman -S ffmpeg" >&2
+      fi
+      ;;
+  esac
   exit 1
 fi
 
-echo "==> 同步依赖（含分析扩展）"
-uv sync --locked --extra analysis
+echo "==> 同步核心依赖"
+uv sync --locked
+if [ "$analysis" -eq 1 ]; then
+  echo "==> 同步分析扩展"
+  uv sync --locked --extra analysis
+fi
 
 if [ ! -f .env ]; then
   cp .env.example .env
   echo "==> 缺少配置，已从 .env.example 生成 .env"
 fi
 
-if [ "$asr_only" -eq 0 ]; then
-  token="${HF_TOKEN:-}"
-  if [ -z "$token" ]; then
-    token="$(sed -n 's/^HF_TOKEN[[:space:]]*=[[:space:]]*//p' .env | tail -1 | tr -d "\"'" | tr -d '[:space:]')"
-  fi
-  if [ -z "$token" ]; then
-    cat >&2 <<'EOF'
-
-人物判断模型 pyannote/speaker-diarization-community-1 是受限模型，需要 Hugging Face 授权：
-
-  1. 登录 https://huggingface.co/pyannote/speaker-diarization-community-1 并接受使用条款
-  2. 在 https://huggingface.co/settings/tokens 创建只读（Read）Token
-  3. 把 Token 填入本目录 .env 的 HF_TOKEN="..."
-  4. 重新执行 ./scripts/setup.sh
-
-如果暂时只要普通话转写与标点模型，可执行：./scripts/setup.sh --asr-only
-EOF
-    exit 1
-  fi
-fi
-
-echo "==> 下载并校验本地模型（首次需要联网与数 GB 空间）"
-model_args=()
-if [ "$asr_only" -eq 1 ]; then
-  model_args+=(--asr-only)
-fi
-uv run --locked --extra analysis --env-file .env \
-  douyin-live-sense prepare-models ${model_args[@]+"${model_args[@]}"}
-
-if [ "$asr_only" -eq 1 ]; then
-  cat >&2 <<'EOF'
-
-注意：本次只准备了普通话转写与标点模型，人物判断仍不可用。
-补全人物判断需要配置 HF_TOKEN 后重新执行 ./scripts/setup.sh。
-EOF
-fi
+echo "==> 初始化管理员登录密码"
+uv run --no-sync --env-file .env douyin-live-sense init-auth "${password_arg[@]}"
 
 cat <<'EOF'
 
@@ -95,4 +119,5 @@ cat <<'EOF'
   ./scripts/run.sh
 
 然后打开 http://127.0.0.1:8787
+初始密码已在上面打印。
 EOF

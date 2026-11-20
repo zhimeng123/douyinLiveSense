@@ -3,8 +3,14 @@ from dataclasses import replace
 
 import pytest
 
+from douyin_live_sense.app import create_app
+from douyin_live_sense.auth import COOKIE_NAME, AuthStore
 from douyin_live_sense.config import Settings
+from douyin_live_sense.monitor import Monitor
 from douyin_live_sense.source import RoomInfo, SourceError
+from douyin_live_sense.storage import Storage
+
+TEST_PASSWORD = "test-password-1234"
 
 
 @pytest.fixture
@@ -17,6 +23,38 @@ def settings(tmp_path):
         poll_seconds=0.01,
         idle_seconds=0.1,
     )
+
+
+@pytest.fixture
+def auth(settings):
+    store = AuthStore(settings.data_dir / "auth.json")
+    store.create(TEST_PASSWORD)
+    return store
+
+
+def login(client):
+    assert client.post("/api/login", json={"password": TEST_PASSWORD}).status_code == 200
+    return client
+
+
+def ws_headers(client):
+    """WebSocket upgrade URLs use ws://testserver, so the cookie jar does not apply."""
+    return {"cookie": f"{COOKIE_NAME}={client.cookies.get(COOKIE_NAME)}"}
+
+
+@pytest.fixture
+def build_app(settings, auth):
+    def build(*, limiter=None, trust_proxy=None, secure_cookies=None):
+        resolved = replace(
+            settings,
+            trust_proxy=settings.trust_proxy if trust_proxy is None else trust_proxy,
+            secure_cookies=secure_cookies or settings.secure_cookies,
+        )
+        store = Storage(resolved.data_dir)
+        monitor = Monitor(store, resolved, FakeSource(), FakeCapture())
+        return create_app(resolved, monitor, auth=auth, limiter=limiter)
+
+    return build
 
 
 def live_room(room_id="123456789", live_id="live-1"):

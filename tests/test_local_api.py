@@ -2,7 +2,7 @@ import time
 from dataclasses import replace
 
 import pytest
-from conftest import FakeCapture, FakeSource
+from conftest import FakeCapture, FakeSource, login, ws_headers
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
@@ -11,10 +11,10 @@ from douyin_live_sense.monitor import Monitor
 from douyin_live_sense.storage import Storage
 
 
-def build(settings):
+def build(settings, auth):
     store = Storage(settings.data_dir)
     monitor = Monitor(store, settings, FakeSource(), FakeCapture())
-    return store, create_app(settings, monitor), monitor
+    return store, create_app(settings, monitor, auth=auth), monitor
 
 
 def wait_session_end(client, session_id, deadline=2.0):
@@ -27,13 +27,14 @@ def wait_session_end(client, session_id, deadline=2.0):
     raise AssertionError("场次未结束")
 
 
-def test_local_websocket_records_audio(settings):
+def test_local_websocket_records_audio(settings, auth):
     settings = replace(settings, idle_seconds=30)
-    store, app, monitor = build(settings)
+    store, app, monitor = build(settings, auth)
     with TestClient(app, base_url="http://127.0.0.1") as client:
+        login(client)
         with client.websocket_connect(
             "/api/local/audio?source=microphone&realtime=false",
-            headers={"host": "127.0.0.1"},
+            headers={**ws_headers(client), "host": "127.0.0.1"},
         ) as ws:
             hello = ws.receive_json()
             assert hello["session_id"]
@@ -49,13 +50,15 @@ def test_local_websocket_records_audio(settings):
     store.close()
 
 
-def test_local_websocket_conflicts_with_guard(settings):
+def test_local_websocket_conflicts_with_guard(settings, auth):
     settings = replace(settings, idle_seconds=30)
-    store, app, monitor = build(settings)
+    store, app, monitor = build(settings, auth)
     with TestClient(app, base_url="http://127.0.0.1") as client:
+        login(client)
         assert client.post("/api/monitor/start", json={"room": "123"}).status_code == 200
         with client.websocket_connect(
-            "/api/local/audio?source=microphone", headers={"host": "127.0.0.1"}
+            "/api/local/audio?source=microphone",
+            headers={**ws_headers(client), "host": "127.0.0.1"},
         ) as ws:
             assert "error" in ws.receive_json()
         assert client.get("/api/monitor").json()["mode"] == "douyin"
@@ -63,13 +66,14 @@ def test_local_websocket_conflicts_with_guard(settings):
     store.close()
 
 
-def test_local_websocket_rejects_foreign_origin(settings):
-    store, app, monitor = build(settings)
+def test_local_websocket_rejects_foreign_origin(settings, auth):
+    store, app, monitor = build(settings, auth)
     with TestClient(app, base_url="http://127.0.0.1") as client:
+        login(client)
         with pytest.raises(WebSocketDisconnect):
             with client.websocket_connect(
                 "/api/local/audio?source=microphone",
-                headers={"host": "127.0.0.1", "origin": "https://evil.test"},
+                headers={**ws_headers(client), "host": "127.0.0.1", "origin": "https://evil.test"},
             ) as ws:
                 ws.send_bytes(b"\x00")
                 ws.receive_json()

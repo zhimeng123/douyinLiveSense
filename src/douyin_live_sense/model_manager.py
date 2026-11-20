@@ -183,9 +183,16 @@ class ModelManager:
             job = dict(self._job)
         downloaded = 0
         root = self.settings.data_dir / "models"
-        if root.is_dir():
-            for path in root.rglob("*"):
-                if path.is_file():
+        for name in job["names"]:
+            model_root = root / name
+            if not model_root.is_dir():
+                continue
+            for path in model_root.rglob("*"):
+                if (
+                    path.is_file()
+                    and ".cache" not in path.parts
+                    and not _matches_ignored(path.name)
+                ):
                     try:
                         downloaded += path.stat().st_size
                     except OSError:

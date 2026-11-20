@@ -2,6 +2,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import tempfile
 from pathlib import Path
 
 from .analysis_types import ModelsNotReady
@@ -95,8 +96,23 @@ def write_token(settings: Settings, token: str) -> None:
         raise ValueError("HF_TOKEN 不可为空")
     path = settings.data_dir / "models" / "hf_token"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(token)
-    path.chmod(0o600)
+    descriptor, temporary_name = tempfile.mkstemp(prefix=".hf_token.", dir=path.parent)
+    try:
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as file:
+            descriptor = -1
+            file.write(token)
+            file.flush()
+            os.fsync(file.fileno())
+        os.replace(temporary_name, path)
+    except Exception:
+        if descriptor >= 0:
+            os.close(descriptor)
+        try:
+            os.unlink(temporary_name)
+        except FileNotFoundError:
+            pass
+        raise
 
 
 def pipeline_config(settings: Settings) -> dict:

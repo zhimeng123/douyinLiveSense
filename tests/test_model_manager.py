@@ -41,7 +41,39 @@ def test_progress_counts_existing_bytes(settings):
     target = settings.data_dir / "models" / "asr" / "rev"
     target.mkdir(parents=True)
     (target / "half.bin").write_bytes(b"x" * 40)
+    (target / "ignored.onnx").write_bytes(b"x" * 50)
+    cache = target / ".cache"
+    cache.mkdir()
+    (cache / "metadata.json").write_bytes(b"x" * 50)
     result = manager.job()
+    assert result["downloaded_bytes"] == 40
+    assert 39 <= result["percent"] <= 41
+
+
+def test_progress_ignores_unrequested_models_and_metadata(settings):
+    manager = ModelManager(settings)
+    manager._job = {
+        "id": "job-1",
+        "state": "running",
+        "parts": ["transcription"],
+        "names": ["asr"],
+        "total_bytes": 100,
+        "started_at": "t",
+        "finished_at": None,
+        "error": "",
+        "current": "asr",
+    }
+    target = settings.data_dir / "models" / "asr" / "rev"
+    target.mkdir(parents=True)
+    (target / "half.bin").write_bytes(b"x" * 40)
+    other = settings.data_dir / "models" / "diarization" / "rev"
+    other.mkdir(parents=True)
+    (other / "unrequested.bin").write_bytes(b"x" * 60)
+    (settings.data_dir / "models" / "hf_token").write_bytes(b"x" * 30)
+    (settings.data_dir / "models" / "manifest.json").write_bytes(b"x" * 20)
+
+    result = manager.job()
+
     assert result["downloaded_bytes"] == 40
     assert 39 <= result["percent"] <= 41
 

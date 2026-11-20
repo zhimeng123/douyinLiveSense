@@ -1,4 +1,5 @@
 import json
+import os
 import stat
 import sys
 from dataclasses import replace
@@ -60,6 +61,28 @@ def test_token_file_takes_precedence(settings, monkeypatch):
     write_token(settings, "  file-token  ")
     token_path = settings.data_dir / "models" / "hf_token"
     assert read_token(settings) == "file-token"
+    assert stat.S_IMODE(token_path.stat().st_mode) == 0o600
+
+
+def test_token_file_is_created_restrictively_when_replacing_existing_file(settings, monkeypatch):
+    token_path = settings.data_dir / "models" / "hf_token"
+    token_path.parent.mkdir(parents=True)
+    token_path.write_text("old-token")
+    token_path.chmod(0o644)
+    real_replace = os.replace
+    observed = {}
+
+    def inspect_replace(source, destination):
+        observed["temporary_mode"] = stat.S_IMODE(os.stat(source).st_mode)
+        observed["old_token_preserved"] = token_path.read_text() == "old-token"
+        real_replace(source, destination)
+
+    monkeypatch.setattr("douyin_live_sense.models.os.replace", inspect_replace)
+
+    write_token(settings, "new-token")
+
+    assert observed == {"temporary_mode": 0o600, "old_token_preserved": True}
+    assert token_path.read_text() == "new-token"
     assert stat.S_IMODE(token_path.stat().st_mode) == 0o600
 
 

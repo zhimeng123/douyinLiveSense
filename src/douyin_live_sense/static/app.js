@@ -725,11 +725,13 @@ async function jumpTo(task) {
 }
 function route() {
   setMenuOpen(false);
-  state.route = location.hash === "#/queue" ? "queue" : "home";
+  state.route = location.hash === "#/queue" ? "queue" : location.hash === "#/models" ? "models" : "home";
   $("home-view").hidden = state.route !== "home";
   $("queue-view").hidden = state.route !== "queue";
+  $("models-view").hidden = state.route !== "models";
   $("nav-home").setAttribute("aria-current", state.route === "home" ? "page" : "false");
   $("nav-queue").setAttribute("aria-current", state.route === "queue" ? "page" : "false");
+  $("nav-models").setAttribute("aria-current", state.route === "models" ? "page" : "false");
   loadQueue().catch((error) => notice(error.message));
 }
 function workletUrl() {
@@ -1050,11 +1052,11 @@ function setMenuOpen(open) {
   menu.setAttribute("aria-hidden", String(!open));
   document.querySelector(".topbar").inert = open;
   document.querySelector("main").inert = open;
-  if (open) menu.querySelector('[aria-current="page"]').focus();
+  if (open) (menu.querySelector('[aria-current="page"]') || $("nav-home")).focus();
 }
 $("menu-toggle").onclick = () => setMenuOpen($("menu-toggle").getAttribute("aria-expanded") !== "true");
 $("menu-backdrop").onclick = () => setMenuOpen(false);
-$("nav-home").onclick = $("nav-queue").onclick = () => setMenuOpen(false);
+for (const id of ["nav-home", "nav-queue", "nav-models"]) $(id).onclick = () => setMenuOpen(false);
 $("logout").onclick = async () => {
   try { await api("/api/logout", { method: "POST" }); }
   finally { location.assign("/login"); }
@@ -1065,7 +1067,7 @@ document.addEventListener("keydown", (event) => {
     event.preventDefault();
     setMenuOpen(false);
   } else if (event.key === "Tab") {
-    const controls = [$("menu-toggle"), $("nav-home"), $("nav-queue"), $("logout")];
+    const controls = [$("menu-toggle"), $("nav-home"), $("nav-queue"), $("nav-models"), $("logout")];
     const next = (controls.indexOf(document.activeElement) + (event.shiftKey ? -1 : 1) + controls.length) % controls.length;
     event.preventDefault();
     controls[next].focus();

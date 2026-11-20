@@ -20,6 +20,7 @@
       <strong class="drawer-heading">菜单</strong>
       <a href="#/home" id="nav-home">ValuSense</a>
       <a href="#/queue" id="nav-queue">分析队列 <span id="queue-badge">0</span></a>
+      <a href="#/models" id="nav-models">模型配置</a>
       <button id="logout" class="drawer-action" type="button">退出登录</button>
     </nav>
     <header class="topbar">
@@ -138,41 +139,6 @@
         </div>
         <div id="local-report" class="local-report"></div>
       </section>
-      <section id="models-card" class="models-card" aria-labelledby="models-heading">
-        <div class="card-heading">
-          <div>
-            <h2 id="models-heading">语音识别</h2>
-            <p class="subtle">关闭时只录音，不下载模型</p>
-          </div>
-          <label class="models-toggle" for="models-switch">
-            <input id="models-switch" type="checkbox" /> 完整识别
-          </label>
-        </div>
-        <p id="models-unsupported" class="notice" role="status" hidden>Linux ARM64 仅支持录音</p>
-        <div class="models-content">
-          <p id="models-state" class="models-mode" aria-live="polite">正在检查识别配置</p>
-          <div class="models-token-row">
-            <label for="models-token">Hugging Face Token</label>
-            <input id="models-token" type="password" autocomplete="new-password" placeholder="hf_…" />
-            <button id="models-token-save" type="button" class="secondary">保存</button>
-            <button id="models-token-clear" type="button" class="text-button">清除</button>
-            <span id="models-token-masked" class="subtle"></span>
-          </div>
-          <p class="models-links"><a href="https://huggingface.co/settings/tokens" target="_blank" rel="noreferrer">创建只读 Token</a><a href="https://huggingface.co/pyannote/speaker-diarization-community-1" target="_blank" rel="noreferrer">接受 Community-1 条款</a></p>
-          <div class="models-components">
-            <div id="models-transcription"><strong>转写（ASR + 标点）</strong><span></span></div>
-            <div id="models-diarization"><strong>人物判断</strong><span></span></div>
-          </div>
-          <div class="models-actions">
-            <button id="models-download" type="button" class="secondary">下载缺失模型</button>
-          </div>
-          <div id="models-progress" hidden>
-            <progress id="models-progress-bar" max="100" value="0"></progress>
-            <span id="models-progress-text">等待下载</span>
-          </div>
-          <p id="models-error" class="notice" role="alert" hidden></p>
-        </div>
-      </section>
       <section class="analysis-summary" aria-label="分析状态">
         <div class="transcript-heading"><h2>本地分析</h2>
           <button id="analyse-current" class="secondary" disabled>分析当前场次全部切片</button>
@@ -204,6 +170,48 @@
           <span id="queue-page">1</span>
           <button id="queue-next" class="text-button" disabled>下一页记录</button>
         </div>
+      </section>
+      <section id="models-view" hidden aria-labelledby="models-heading">
+        <div class="intro">
+          <div class="eyebrow">MODEL SETUP</div>
+          <h1 id="models-heading">模型配置</h1>
+          <p>配置语音识别模型并查看下载进度。</p>
+        </div>
+        <section id="models-card" class="models-card" aria-labelledby="models-card-heading">
+          <div class="card-heading">
+            <div>
+              <h2 id="models-card-heading">语音识别</h2>
+              <p class="subtle">关闭时只录音，不下载模型</p>
+            </div>
+            <label class="models-toggle" for="models-switch">
+              <input id="models-switch" type="checkbox" /> 完整识别
+            </label>
+          </div>
+          <p id="models-unsupported" class="notice" role="status" hidden>Linux ARM64 仅支持录音</p>
+          <div class="models-content">
+            <p id="models-state" class="models-mode" aria-live="polite">正在检查识别配置</p>
+            <div class="models-token-row">
+              <label for="models-token">Hugging Face Token</label>
+              <input id="models-token" type="password" autocomplete="new-password" placeholder="hf_…" />
+              <button id="models-token-save" type="button" class="secondary">保存</button>
+              <button id="models-token-clear" type="button" class="text-button">清除</button>
+              <span id="models-token-masked" class="subtle"></span>
+            </div>
+            <p class="models-links"><a href="https://huggingface.co/settings/tokens" target="_blank" rel="noreferrer">创建只读 Token</a><a href="https://huggingface.co/pyannote/speaker-diarization-community-1" target="_blank" rel="noreferrer">接受 Community-1 条款</a></p>
+            <div class="models-components">
+              <div id="models-transcription"><strong>转写（ASR + 标点）</strong><span></span></div>
+              <div id="models-diarization"><strong>人物判断</strong><span></span></div>
+            </div>
+            <div class="models-actions">
+              <button id="models-download" type="button" class="secondary">下载缺失模型</button>
+            </div>
+            <div id="models-progress" hidden>
+              <progress id="models-progress-bar" max="100" value="0"></progress>
+              <span id="models-progress-text">等待下载</span>
+            </div>
+            <p id="models-error" class="notice" role="alert" hidden></p>
+          </div>
+        </section>
       </section>
       <section id="player-section" class="player" hidden aria-label="音频回听">
         <span id="player-label"></span><audio id="player" controls preload="none"></audio>

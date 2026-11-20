@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Annotated
 
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -96,12 +96,10 @@ class AuthMiddleware:
             await self.app(scope, receive, send)
             return
         path = scope.get("path", "")
-        if path in PUBLIC_PATHS:
-            await self.app(scope, receive, send)
-            return
         session = self._session(scope)
         if session:
             scope.setdefault("state", {})["session"] = session
+        if session or path in PUBLIC_PATHS:
             await self.app(scope, receive, send)
             return
         if scope["type"] == "websocket":
@@ -225,6 +223,12 @@ def create_app(
         if settings.secure_cookies == "never":
             return False
         return request_scheme(scope, settings) == "https"
+
+    @app.get("/login")
+    async def login_page(request: Request):
+        if getattr(request.state, "session", None):
+            return RedirectResponse("/")
+        return FileResponse(Path(__file__).parent / "static" / "login.html")
 
     @app.post("/api/login")
     async def login(body: LoginRequest, request: Request):

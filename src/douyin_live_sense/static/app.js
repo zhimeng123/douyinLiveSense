@@ -38,6 +38,10 @@ function notice(message) {
 async function api(path, options) {
   const response = await fetch(path, options);
   const body = await response.json();
+  if (response.status === 401) {
+    location.assign("/login");
+    throw new Error("请先登录。");
+  }
   if (!response.ok) throw new Error(typeof body.detail === "string" ? body.detail : "请求失败，请检查输入。");
   return body;
 }
@@ -836,13 +840,17 @@ function setMenuOpen(open) {
 $("menu-toggle").onclick = () => setMenuOpen($("menu-toggle").getAttribute("aria-expanded") !== "true");
 $("menu-backdrop").onclick = () => setMenuOpen(false);
 $("nav-home").onclick = $("nav-queue").onclick = () => setMenuOpen(false);
+$("logout").onclick = async () => {
+  try { await api("/api/logout", { method: "POST" }); }
+  finally { location.assign("/login"); }
+};
 document.addEventListener("keydown", (event) => {
   if ($("menu-toggle").getAttribute("aria-expanded") !== "true") return;
   if (event.key === "Escape") {
     event.preventDefault();
     setMenuOpen(false);
   } else if (event.key === "Tab") {
-    const controls = [$("menu-toggle"), $("nav-home"), $("nav-queue")];
+    const controls = [$("menu-toggle"), $("nav-home"), $("nav-queue"), $("logout")];
     const next = (controls.indexOf(document.activeElement) + (event.shiftKey ? -1 : 1) + controls.length) % controls.length;
     event.preventDefault();
     controls[next].focus();

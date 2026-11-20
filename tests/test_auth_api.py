@@ -32,6 +32,18 @@ def test_login_sets_seven_day_httponly_cookie(build_app):
         assert client.get("/api/auth").json()["username"] == "admin"
 
 
+def test_login_page_is_public_and_authenticated_users_are_redirected(build_app):
+    client = TestClient(build_app(), base_url="http://127.0.0.1")
+    with client:
+        page = client.get("/login")
+        assert page.status_code == 200
+        assert 'id="login-form"' in page.text
+        login(client)
+        redirected = client.get("/login", follow_redirects=False)
+        assert redirected.status_code == 307
+        assert redirected.headers["location"] == "/"
+
+
 def test_wrong_password_is_rate_limited(build_app):
     app = build_app(limiter=LoginLimiter(max_failures=2, lock_seconds=60))
     client = TestClient(app, base_url="http://127.0.0.1")

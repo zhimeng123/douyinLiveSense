@@ -21,6 +21,13 @@ from .auth import (
     verify_session,
 )
 from .config import Settings
+from .model_manager import (
+    DependenciesMissing,
+    DownloadConflict,
+    ModelManager,
+    TokenInvalid,
+    TokenRequired,
+)
 from .models import model_status
 from .monitor import Monitor, MonitorConflict
 from .platform_support import analysis_supported
@@ -158,6 +165,14 @@ class PreferencesRequest(BaseModel):
     recognition: bool
 
 
+class TokenRequest(BaseModel):
+    token: str = Field(min_length=1, max_length=4096)
+
+
+class ModelDownloadRequest(BaseModel):
+    parts: list[str] = Field(min_length=1)
+
+
 class AnalysisRequest(BaseModel):
     retry: bool = False
 
@@ -212,6 +227,7 @@ def create_app(
     app.state.auth = auth
     app.state.limiter = limiter
     app.state.preferences = preferences
+    app.state.models = ModelManager(settings)
     app.add_middleware(AuthMiddleware, auth=auth, settings=settings)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=list(settings.allowed_hosts))
 
@@ -481,6 +497,53 @@ def create_app(
             "supported": supported,
             "reason": reason,
         }
+
+    @app.get("/api/models")
+    async def get_models():
+        return app.state.models.status()
+
+    @app.put("/api/models/token")
+    async def set_model_token(body: TokenRequest):
+        try:
+            result = app.state.models.set_token(body.token)
+        except TokenInvalid as error:
+            raise HTTPException(400, "Token 无效或已过期。") from error
+        return {**result, "token": app.state.models.status()["token"]}
+
+    @app.delete("/api/models/token")
+    async def clear_model_token():
+        app.state.models.clear_token()
+        return {"ok": True}
+
+    @app.post("/api/models/download", status_code=202)
+    async def start_model_download(body: ModelDownloadRequest):
+        try:
+            job = app.state.models.start_download(body.parts)
+        except TokenRequired:
+            return JSONResponse(
+                {
+                    "detail": "人物判断需要 Hugging Face Token。",
+                    "needs_token": True,
+                },
+                status_code=400,
+            )
+        except DependenciesMissing as error:
+            raise HTTPException(
+                409,
+                detail={
+                    "detail": "分析依赖未安装，请运行 ./scripts/setup.sh。",
+                    "needs_dependencies": True,
+                },
+            ) from error
+        except DownloadConflict as error:
+            raise HTTPException(409, "已有模型下载任务在运行。") from error
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
+        return JSONResponse({"job_id": job["id"]}, status_code=202)
+
+    @app.get("/api/models/job")
+    async def get_model_job():
+        return app.state.models.job()
 
     @app.put("/api/preferences")
     async def set_preferences(body: PreferencesRequest):

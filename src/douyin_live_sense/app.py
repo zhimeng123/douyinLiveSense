@@ -21,7 +21,10 @@ from .auth import (
     verify_session,
 )
 from .config import Settings
+from .models import model_status
 from .monitor import Monitor, MonitorConflict
+from .platform_support import analysis_supported
+from .preferences import Preferences
 from .source import NeedsAttention
 from .storage import InstanceLock, Storage
 from .transcripts import chronological, speaker_label
@@ -151,6 +154,10 @@ class RealtimeRequest(BaseModel):
     enabled: bool
 
 
+class PreferencesRequest(BaseModel):
+    recognition: bool
+
+
 class AnalysisRequest(BaseModel):
     retry: bool = False
 
@@ -173,6 +180,7 @@ def create_app(
     if not auth.exists():
         raise RuntimeError("尚未设置登录密码，请先运行 ./scripts/setup.sh 或 init-auth。")
     limiter = limiter or LoginLimiter()
+    preferences = preferences or Preferences(settings.data_dir / "preferences.json")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -185,7 +193,9 @@ def create_app(
             app.state.monitor = monitor or Monitor(store, settings)
             app.state.store = store
             await app.state.monitor.restore()
-            app.state.analysis = analysis or AnalysisService(app.state.monitor, settings)
+            app.state.analysis = analysis or AnalysisService(
+                app.state.monitor, settings, preferences=preferences
+            )
             await app.state.analysis.start()
             try:
                 yield
@@ -292,6 +302,8 @@ def create_app(
 
     @app.post("/api/monitor/start")
     async def start_monitor(body: StartRequest):
+        if body.realtime_analysis and not app.state.preferences.enabled():
+            raise HTTPException(409, "请先在语音识别卡片开启完整识别。")
         try:
             result = await app.state.monitor.start(body.room, body.realtime_analysis)
             app.state.analysis.sync_live()
@@ -375,6 +387,8 @@ def create_app(
 
     @app.put("/api/analysis/realtime")
     async def set_realtime(body: RealtimeRequest):
+        if body.enabled and not app.state.preferences.enabled():
+            raise HTTPException(409, "请先在语音识别卡片开启完整识别。")
         try:
             return await app.state.analysis.set_realtime(body.enabled)
         except MonitorConflict as error:
@@ -402,6 +416,10 @@ def create_app(
 
     @app.post("/api/sessions/{session_id}/analysis")
     async def start_analysis(session_id: str, body: AnalysisRequest | None = None):
+        if not app.state.store.session(session_id):
+            raise HTTPException(404, "场次不存在。")
+        if not app.state.preferences.enabled():
+            raise HTTPException(409, "请先在语音识别卡片开启完整识别。")
         try:
             return app.state.analysis.request(session_id, body.retry if body else False)
         except KeyError as error:
@@ -449,8 +467,38 @@ def create_app(
     @app.post("/api/segments/{segment_id}/analysis")
     async def start_segment_analysis(segment_id: str, body: SegmentAnalysisRequest | None = None):
         require_segment(segment_id)
+        if not app.state.preferences.enabled():
+            raise HTTPException(409, "请先在语音识别卡片开启完整识别。")
         body = body or SegmentAnalysisRequest()
         return app.state.analysis.request_segment(segment_id, body.reanalyse, body.retry)
+
+    @app.get("/api/preferences")
+    async def get_preferences():
+        supported, reason = analysis_supported()
+        return {
+            "recognition": app.state.preferences.enabled(),
+            "mode": "full" if app.state.preferences.enabled() else "record",
+            "supported": supported,
+            "reason": reason,
+        }
+
+    @app.put("/api/preferences")
+    async def set_preferences(body: PreferencesRequest):
+        if body.recognition:
+            supported, reason = analysis_supported()
+            if not supported:
+                raise HTTPException(409, reason)
+            readiness = model_status(settings)
+            if not readiness["ready"]:
+                missing = []
+                for component in readiness.get("components", {}).values():
+                    missing.extend(component.get("missing", []))
+                raise HTTPException(
+                    409,
+                    detail={"detail": "模型未就绪。", "missing": sorted(set(missing))},
+                )
+        app.state.preferences.set_enabled(body.recognition)
+        return {"recognition": app.state.preferences.enabled()}
 
     @app.get("/api/segments/{segment_id}/analysis")
     async def get_segment_analysis(segment_id: str):

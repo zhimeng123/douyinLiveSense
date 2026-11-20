@@ -18,6 +18,7 @@ from douyin_live_sense.app import create_app
 from douyin_live_sense.audio import SegmentWriter
 from douyin_live_sense.models import pipeline_config
 from douyin_live_sense.monitor import Monitor
+from douyin_live_sense.preferences import Preferences
 from douyin_live_sense.storage import Storage, utc_now
 from douyin_live_sense.transcripts import export_run
 
@@ -313,8 +314,11 @@ def test_analysis_api_incremental_docs_and_audio(analysis_settings, auth):
     monitor = Monitor(store, settings, FakeSource(), FakeCapture())
     worker = FixtureWorker(settings.data_dir)
     service = AnalysisService(monitor, settings, worker, lambda: {"ready": True, "reason": ""})
+    preferences = Preferences(settings.data_dir / "preferences.json")
+    preferences.set_enabled(True)
     with TestClient(
-        create_app(settings, monitor, service, auth=auth), base_url="http://127.0.0.1"
+        create_app(settings, monitor, service, auth=auth, preferences=preferences),
+        base_url="http://127.0.0.1",
     ) as client:
         login(client)
         assert client.get("/api/analysis/status").json()["worker_state"] == "idle"

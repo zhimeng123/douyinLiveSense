@@ -16,6 +16,7 @@ const state = {
   queueRequests: new Map(), queueLoading: false,
   localBusy: false, localSessionId: null, localReportId: null,
   localSocket: null, localStream: null, localContext: null, localReport: null,
+  models: null, modelJob: null, modelPoll: null, recognition: false, recognitionPending: false,
 };
 const timeFormat = new Intl.DateTimeFormat("zh-CN", {
   timeZone: "Asia/Shanghai", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
@@ -42,8 +43,164 @@ async function api(path, options) {
     location.assign("/login");
     throw new Error("请先登录。");
   }
-  if (!response.ok) throw new Error(typeof body.detail === "string" ? body.detail : "请求失败，请检查输入。");
+  if (!response.ok) throw new Error(typeof body.detail === "string" ? body.detail : body.detail?.detail || "请求失败，请检查输入。");
   return body;
+}
+function showModelError(message) {
+  const error = $("models-error");
+  error.textContent = message || "";
+  error.hidden = !message;
+}
+function componentLabel(component, downloading) {
+  if (downloading) return "下载中";
+  if (component?.ready) return "就绪";
+  if (component?.failed || state.modelJob?.state === "failed") return "失败";
+  return "未下载";
+}
+function formatBytes(value) {
+  if (!value) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  const index = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1);
+  return `${(value / (1024 ** index)).toFixed(index >= 3 ? 1 : 0)} ${units[index]}`;
+}
+function renderModels() {
+  const models = state.models;
+  if (!models) return;
+  const job = state.modelJob;
+  const running = job?.state === "running";
+  const unsupported = !models.supported;
+  $("models-unsupported").hidden = !unsupported;
+  $("models-switch").disabled = unsupported || running;
+  $("models-switch").checked = state.recognition;
+  $("models-state").textContent = state.recognition
+    ? "完整识别已开启"
+    : state.recognitionPending ? "正在准备模型，完成后启用完整识别" : "仅录音模式";
+  $("models-token").disabled = unsupported || running;
+  $("models-token-save").disabled = unsupported || running;
+  $("models-token-clear").disabled = unsupported || running || !models.token?.configured;
+  $("models-token-masked").textContent = models.token?.configured ? `已保存：${models.token.masked}` : "未配置";
+  const downloading = running ? job.current : "";
+  const transcriptionBusy = downloading === "asr" || downloading === "punctuation" || (running && job.parts.includes("transcription"));
+  const diarizationBusy = downloading === "diarization" || (running && job.parts.includes("diarization"));
+  $("models-transcription").querySelector("span").textContent = componentLabel(models.components?.transcription, transcriptionBusy);
+  $("models-diarization").querySelector("span").textContent = componentLabel(models.components?.diarization, diarizationBusy);
+  const missing = [];
+  if (!models.components?.transcription?.ready) missing.push("transcription");
+  if (!models.components?.diarization?.ready) missing.push("diarization");
+  $("models-download").hidden = unsupported || missing.length === 0;
+  $("models-download").disabled = running || !missing.length;
+  $("models-download").textContent = running ? "模型下载中…" : "下载缺失模型";
+  $("models-progress").hidden = !job || !["running", "completed", "failed"].includes(job.state);
+  if (job) {
+    const percent = Math.max(0, Math.min(100, Number(job.percent) || 0));
+    $("models-progress-bar").value = percent;
+    $("models-progress-text").textContent = `${job.state === "running" ? `已下载 ${percent.toFixed(0)}%` : job.state === "completed" ? "下载完成" : "下载失败"} · ${formatBytes(job.downloaded_bytes)} / ${formatBytes(job.total_bytes)}`;
+  }
+}
+async function loadModels() {
+  const [models, preferences] = await Promise.all([api("/api/models"), api("/api/preferences")]);
+  state.models = models;
+  state.modelJob = models.job;
+  state.recognition = preferences.recognition;
+  renderModels();
+  syncAnalysisControls();
+  updateModelPolling();
+}
+function syncAnalysisControls() {
+  $("realtime").disabled = !state.recognition || state.busy || state.analysisBusy || !state.monitorEnabled;
+  $("local-realtime").disabled = !state.recognition || state.localBusy || !!state.localSocket;
+  $("analyse-current").disabled = !state.recognition || state.analysisBusy || !state.monitor?.session_id;
+  for (const view of state.sessions.values()) {
+    if (view.generate) view.generate.disabled = !state.recognition || !!view.busy || !view.hasReadyAudio;
+    if (view.retry) view.retry.disabled = !state.recognition || !!view.busy;
+    for (const clip of view.clipViews.values()) if (clip.data) updateClip(clip, clip.data);
+  }
+}
+function updateModelPolling() {
+  if (state.modelJob?.state === "running" && !document.hidden && !state.modelPoll) {
+    state.modelPoll = setInterval(() => pollModelJob().catch((error) => showModelError(error.message)), 1000);
+  } else if ((state.modelJob?.state !== "running" || document.hidden) && state.modelPoll) {
+    clearInterval(state.modelPoll);
+    state.modelPoll = null;
+  }
+}
+async function pollModelJob() {
+  if (document.hidden || state.modelJob?.state !== "running") return;
+  state.modelJob = await api("/api/models/job");
+  if (state.modelJob?.state !== "running") {
+    const completed = state.modelJob?.state === "completed";
+    const error = state.modelJob?.error;
+    const pending = state.recognitionPending;
+    state.recognitionPending = false;
+    await loadModels();
+    if (!completed) showModelError(error || "模型下载失败。");
+    else if (pending) await enableRecognitionIfReady();
+  } else renderModels();
+  updateModelPolling();
+}
+async function beginModelDownload(parts, pendingEnable = false) {
+  if (!parts.length) {
+    if (pendingEnable) await enableRecognitionIfReady();
+    return;
+  }
+  state.recognitionPending = pendingEnable;
+  showModelError("");
+  try {
+    await api("/api/models/download", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ parts }),
+    });
+    await loadModels();
+  } catch (error) {
+    state.recognitionPending = false;
+    showModelError(error.message);
+  }
+}
+async function enableRecognitionIfReady() {
+  try {
+    await api("/api/preferences", {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ recognition: true }),
+    });
+    state.recognition = true;
+    renderModels();
+    syncAnalysisControls();
+    showModelError("");
+    await refresh(true);
+  } catch (error) {
+    state.recognition = false;
+    renderModels();
+    syncAnalysisControls();
+    showModelError(error.message);
+  }
+}
+async function requestRecognition(enabled) {
+  if (!enabled) {
+    state.recognitionPending = false;
+    try {
+      await api("/api/preferences", {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ recognition: false }),
+      });
+      state.recognition = false;
+      showModelError("");
+    } catch (error) { showModelError(error.message); }
+    renderModels();
+    syncAnalysisControls();
+    return;
+  }
+  const missing = [];
+  if (!state.models?.components?.transcription?.ready) missing.push("transcription");
+  if (!state.models?.components?.diarization?.ready) missing.push("diarization");
+  if (missing.length && !state.models?.token?.configured) {
+    showModelError("人物判断需要 Hugging Face Token，请先保存 Token 并接受 Community-1 条款。");
+    return;
+  }
+  if (missing.length) {
+    await beginModelDownload(missing, true);
+    return;
+  }
+  await enableRecognitionIfReady();
 }
 function node(tag, text, className) {
   const element = document.createElement(tag);
@@ -239,6 +396,10 @@ function updateSession(view, session) {
   view.heading.textContent = `${session.anchor_name || `直播间 ${session.room_id}`} · ${stamp(session.started_at)}`;
   view.description.textContent = `${session.ended_at ? "已结束" : "场次未结束"} · ${duration(session.duration_seconds)} · ${session.segment_count} 段`;
   view.info.textContent = `${session.title || "直播记录"} · 房间 ${session.room_id} · 场次 ${session.id}`;
+  if (!state.recognition) {
+    view.generate.disabled = true;
+    view.retry.disabled = true;
+  }
 }
 function renderSessionList() {
   const views = Array.from(state.sessions.values()).filter((v) => state.visibleSessions.has(v.id) || v.id === state.pinnedSession);
@@ -298,10 +459,10 @@ function updateClip(clip, segment) {
   clip.meta.textContent = `${(segment.sample_count / segment.sample_rate).toFixed(2)} 秒 · 整场：${analysisLabels[status.session_state]} · 复核：${analysisLabels[status.review_state]}`;
   if (!clip.chosen) clip.scope = status.session_state === "complete" || !status.available_run_id ? "session" : "segment";
   const busy = clip.busy || ["pending", "processing", "needs_setup", "waiting_context"].includes(status.review_state);
-  clip.analyse.disabled = busy || status.review_state !== "not_requested";
-  clip.reanalyse.disabled = busy || status.review_state === "not_requested";
+  clip.analyse.disabled = !state.recognition || busy || status.review_state !== "not_requested";
+  clip.reanalyse.disabled = !state.recognition || busy || status.review_state === "not_requested";
   clip.retry.hidden = status.review_state !== "needs_attention";
-  clip.retry.disabled = !!clip.busy;
+  clip.retry.disabled = !state.recognition || !!clip.busy;
 }
 async function loadClip(clip) {
   if (clip.loading) return;
@@ -355,6 +516,10 @@ async function post(path, body) {
   return api(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
 }
 async function requestSession(id, retry = false) {
+  if (!state.recognition) {
+    showModelError("当前为仅录音模式，请先开启完整识别。");
+    return;
+  }
   let view = state.sessions.get(id);
   if (view?.busy) return;
   state.actionError = null;
@@ -404,6 +569,10 @@ async function requestSession(id, retry = false) {
   }
 }
 async function requestClip(clip, reanalyse = false, retry = false) {
+  if (!state.recognition) {
+    showModelError("当前为仅录音模式，请先开启完整识别。");
+    return;
+  }
   clip.busy = true;
   updateClip(clip, clip.data);
   try {
@@ -482,6 +651,7 @@ function updateQueueRequest(view, record, active) {
   view.current.textContent = active ? `正在${active.kind === "flush" ? "整理末尾发言" : `分析第 ${active.sequence} 段`} · 已用 ${duration(active.elapsed_seconds)}` : "切片已处理，末尾发言待整理；完成后进度达到 100%";
   view.error.textContent = record.last_error || record.export_error || "";
   view.retry.hidden = record.state !== "needs_attention";
+  view.retry.disabled = !state.recognition || record.state !== "needs_attention";
 }
 async function loadRequestSegments(view) {
   if (view.loading) return;
@@ -655,7 +825,7 @@ async function startLocal() {
     if (!navigator.mediaDevices) throw new Error("此浏览器不支持音频采集。");
     const source = $("local-source").value;
     const stream = await acquireStream(source);
-    const realtime = $("local-realtime").checked;
+    const realtime = state.recognition && $("local-realtime").checked;
     const scheme = location.protocol === "https:" ? "wss" : "ws";
     const socket = new WebSocket(
       `${scheme}://${location.host}/api/local/audio?source=${source}&realtime=${realtime}`,
@@ -732,7 +902,7 @@ function updateLocal() {
     ? "处理中…"
     : local ? "停止录音" : "开启录音";
   $("local-source").disabled = state.localBusy || local || busyElsewhere;
-  $("local-realtime").disabled = state.localBusy || local || busyElsewhere;
+  $("local-realtime").disabled = !state.recognition || state.localBusy || local || busyElsewhere;
   if (local) $("local-realtime").checked = data.realtime_analysis;
   $("local-state").textContent = busyElsewhere ? "其他任务运行中" : labels[data.state] || "未录音";
   $("local-state").className = `badge ${local ? data.state : "stopped"}`;
@@ -753,6 +923,51 @@ $("local-toggle").onclick = () => {
   const local = state.monitor && state.monitor.mode === "local";
   return (local ? stopLocal() : startLocal()).catch((error) => localNotice(error.message));
 };
+$("models-token-save").onclick = async () => {
+  const token = $("models-token").value.trim();
+  if (!token) {
+    showModelError("请输入 Hugging Face Token。");
+    return;
+  }
+  try {
+    const result = await api("/api/models/token", {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token }),
+    });
+    $("models-token").value = "";
+    state.models = { ...state.models, token: result.token };
+    renderModels();
+    showModelError(result.warning || "Token 已保存。");
+  } catch (error) { showModelError(error.message); }
+};
+$("models-token-clear").onclick = async () => {
+  try {
+    await api("/api/models/token", { method: "DELETE" });
+    if (state.recognition) {
+      await api("/api/preferences", {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ recognition: false }),
+      });
+      state.recognition = false;
+    }
+    state.models = { ...state.models, token: { configured: false, masked: "", source: "none" } };
+    renderModels();
+    syncAnalysisControls();
+    showModelError("Token 已清除。");
+  } catch (error) { showModelError(error.message); }
+};
+$("models-download").onclick = async () => {
+  const parts = [];
+  if (!state.models?.components?.transcription?.ready) parts.push("transcription");
+  if (!state.models?.components?.diarization?.ready) parts.push("diarization");
+  await beginModelDownload(parts);
+};
+$("models-switch").onchange = async () => {
+  const enabled = $("models-switch").checked;
+  $("models-switch").disabled = true;
+  await requestRecognition(enabled);
+  $("models-switch").disabled = false;
+};
 async function refresh(force = false) {
   if (state.refreshRunning) return;
   state.refreshRunning = true;
@@ -761,7 +976,7 @@ async function refresh(force = false) {
     state.connected = true;
     renderMonitor(monitor);
     updateLocal();
-    $("analysis-global").textContent = global.models.ready ? (global.worker_state === "processing" ? "模型正在分析音频" : "模型已就绪") : "模型尚未就绪，录音可继续";
+    $("analysis-global").textContent = state.recognition && global.models.ready ? (global.worker_state === "processing" ? "模型正在分析音频" : "模型已就绪") : "仅录音模式";
     $("model-hint").textContent = global.last_error || global.models.reason || "本地运行：Community-1 人物判断 + Paraformer 普通话转写。分段分析会有处理延迟。";
     if (force || state.tick++ % 5 === 0) await loadSessions();
     if (state.route === "home") {
@@ -783,7 +998,7 @@ async function refresh(force = false) {
     $("start").disabled = true;
     $("stop").disabled = true;
     notice(error.message);
-  } finally { state.refreshRunning = false; }
+  } finally { state.refreshRunning = false; syncAnalysisControls(); }
 }
 async function act(path, body) {
   state.actionError = null;
@@ -857,8 +1072,13 @@ document.addEventListener("keydown", (event) => {
   }
 });
 window.addEventListener("hashchange", route);
+document.addEventListener("visibilitychange", () => {
+  updateModelPolling();
+  if (!document.hidden && state.modelJob?.state === "running") pollModelJob().catch((error) => showModelError(error.message));
+});
 state.localReport = createReport("", "音频接收时间（北京时间）；人物编号在本场次内有效。");
 $("local-report").append(state.localReport.root);
 route();
+loadModels().catch((error) => showModelError(error.message));
 refresh(true);
 setInterval(() => refresh(), 2000);

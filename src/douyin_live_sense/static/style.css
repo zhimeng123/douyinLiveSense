@@ -679,6 +679,27 @@ footer {
 .analysis-summary { margin: 20px 0; padding: 18px 24px; border: 1px solid #dfe6df; border-radius: 16px; background: #fff; }
 .analysis-summary > span { margin-left: 16px; }
 .analysis-summary p { margin-bottom: 0; overflow-wrap: anywhere; }
+.models-card { margin: 20px 0; border: 1px solid var(--border); border-radius: 16px; background: #fff; overflow: hidden; }
+.models-card .card-heading { border-bottom: 1px solid var(--border); }
+.models-card .card-heading p { margin: 6px 0 0; }
+.models-toggle { display: flex; align-items: center; gap: 9px; margin: 0; color: #314b3e; font-size: 13px; font-weight: 600; }
+.models-toggle input { flex: none; width: 18px; height: 18px; accent-color: var(--green); }
+.models-content { padding: 0 30px 26px; }
+.models-mode { margin: 20px 0; color: var(--green); font-size: 13px; font-weight: 600; }
+.models-token-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.models-token-row label { margin: 0; width: 150px; }
+.models-token-row input { flex: 1 1 240px; }
+.models-token-row .text-button { padding: 10px 4px; }
+.models-links { display: flex; gap: 18px; margin: 10px 0 20px 160px; font-size: 11px; color: var(--muted); }
+.models-components { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+.models-components > div { display: flex; justify-content: space-between; gap: 12px; padding: 14px; border: 1px solid var(--border); border-radius: 8px; background: #fcfdf9; font-size: 13px; }
+.models-components span { color: var(--muted); white-space: nowrap; }
+.models-actions { margin-top: 16px; }
+.models-actions button { min-width: 150px; }
+#models-progress { display: flex; align-items: center; gap: 12px; margin-top: 16px; }
+#models-progress-bar { flex: 1; height: 8px; accent-color: var(--green); }
+#models-progress-text { min-width: 180px; color: var(--muted); font-size: 12px; text-align: right; }
+.models-card .notice { margin: 0 30px 18px; }
 .transcript-panel { margin: 16px 0 28px; padding-bottom: 24px; border-bottom: 1px solid #e4e9e3; }
 .transcript-heading, .utterance-meta { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
 .transcript-heading { justify-content: space-between; }
@@ -778,6 +799,13 @@ summary { cursor: pointer; line-height: 1.7; outline-offset: -3px; }
   .intro h1 { font-size: 25px; }
   .analysis-summary { padding: 18px; }
   .analysis-summary .secondary { white-space: normal; text-align: left; font-size: 12px; }
+  .models-content { padding: 0 18px 20px; }
+  .models-card .card-heading { padding: 20px 18px 16px; }
+  .models-token-row label { width: 100%; }
+  .models-links { margin-left: 0; flex-wrap: wrap; }
+  .models-components { grid-template-columns: 1fr; }
+  #models-progress { align-items: stretch; flex-direction: column; }
+  #models-progress-text { text-align: left; }
   .section-heading { align-items: center; }
   .section-heading > .subtle { max-width: 88px; }
   .session-archive > summary { padding: 16px 14px; }

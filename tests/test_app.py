@@ -1,6 +1,6 @@
 import time
 
-from conftest import FakeCapture, FakeSource
+from conftest import FakeCapture, FakeSource, login
 from fastapi.testclient import TestClient
 
 from douyin_live_sense.app import create_app
@@ -9,10 +9,12 @@ from douyin_live_sense.monitor import Monitor
 from douyin_live_sense.storage import Storage, utc_now
 
 
-def test_api_start_stop_conflict_and_validation(settings):
+def test_api_start_stop_conflict_and_validation(settings, auth):
     store = Storage(settings.data_dir)
     monitor = Monitor(store, settings, FakeSource(), FakeCapture())
-    with TestClient(create_app(settings, monitor), base_url="http://127.0.0.1") as client:
+    app = create_app(settings, monitor, auth=auth)
+    with TestClient(app, base_url="http://127.0.0.1") as client:
+        login(client)
         assert client.get("/").status_code == 200
         assert "直播监听守卫" in client.get("/").text
         assert client.get("/style.css").status_code == 200
@@ -51,11 +53,13 @@ def test_api_start_stop_conflict_and_validation(settings):
     store.close()
 
 
-def test_pending_audio_is_not_public_and_invalid_host_origin_rejected(settings):
+def test_pending_audio_is_not_public_and_invalid_host_origin_rejected(settings, auth):
     store = Storage(settings.data_dir)
     session = store.create_session("123", "id", "a", "t")
     monitor = Monitor(store, settings, FakeSource(), FakeCapture())
-    with TestClient(create_app(settings, monitor), base_url="http://127.0.0.1") as client:
+    app = create_app(settings, monitor, auth=auth)
+    with TestClient(app, base_url="http://127.0.0.1") as client:
+        login(client)
         writer = SegmentWriter(store, settings, session["id"])
         writer.feed(b"\x01\x02" * 8, utc_now())
         segment_id = writer.segment["id"]

@@ -5,7 +5,7 @@ import time
 from dataclasses import replace
 
 import pytest
-from conftest import FakeCapture, FakeSource, eventually
+from conftest import FakeCapture, FakeSource, eventually, login
 from fastapi.testclient import TestClient
 from test_analysis import FixtureWorker, process_all, recording
 
@@ -271,7 +271,7 @@ async def test_single_recovery_and_priority_after_active_window(settings):
         store.close()
 
 
-def test_api_clip_versions_sorted_cursor_exports_and_origin(settings):
+def test_api_clip_versions_sorted_cursor_exports_and_origin(settings, auth):
     settings = replace(settings, segment_seconds=4)
     store, session, _, _ = recording(settings, [(1, 64_000), (2, 64_000), (1, 64_000)])
     storage = AnalysisStorage(store)
@@ -288,7 +288,10 @@ def test_api_clip_versions_sorted_cursor_exports_and_origin(settings):
         monitor, settings, FixtureWorker(settings.data_dir), lambda: {"ready": True}
     )
     segment = store.segments(session["id"])[1]
-    with TestClient(create_app(settings, monitor, service), base_url="http://127.0.0.1") as client:
+    with TestClient(
+        create_app(settings, monitor, service, auth=auth), base_url="http://127.0.0.1"
+    ) as client:
+        login(client)
         page = client.get(f"/api/sessions/{session['id']}/utterances?limit=2").json()
         assert [r["id"] for r in page["items"]] == [rows[1]["id"], rows[0]["id"]]
         assert page["next_cursor"] == rows[1]["ordinal"]

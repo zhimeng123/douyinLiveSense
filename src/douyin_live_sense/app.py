@@ -1,26 +1,152 @@
 import asyncio
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, Response
+from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .analysis import AnalysisService
 from .analysis_audio import read_sources, wav_bytes
+from .auth import (
+    COOKIE_NAME,
+    SESSION_COOKIE_PATH,
+    AuthStore,
+    LoginLimiter,
+    sign_session,
+    verify_session,
+)
 from .config import Settings
 from .monitor import Monitor, MonitorConflict
 from .source import NeedsAttention
 from .storage import InstanceLock, Storage
 from .transcripts import chronological, speaker_label
 
+PUBLIC_PATHS = frozenset(
+    {
+        "/login",
+        "/login.html",
+        "/login.js",
+        "/style.css",
+        "/app.js",
+        "/favicon.ico",
+        "/api/login",
+    }
+)
+
+
+def header_value(scope: dict, name: bytes) -> str:
+    for key, value in scope.get("headers", []):
+        if key == name:
+            return value.decode("latin-1")
+    return ""
+
+
+def request_scheme(scope: dict, settings: Settings) -> str:
+    if settings.trust_proxy:
+        forwarded = header_value(scope, b"x-forwarded-proto").split(",")[0].strip().lower()
+        if forwarded in {"http", "https"}:
+            return forwarded
+    return scope.get("scheme", "http")
+
+
+def client_ip(scope: dict, settings: Settings) -> str:
+    if settings.trust_proxy:
+        forwarded = header_value(scope, b"x-forwarded-for").split(",")[0].strip()
+        if forwarded:
+            return forwarded
+    client = scope.get("client")
+    return client[0] if client else "unknown"
+
+
+def session_token(scope: dict) -> str:
+    for part in header_value(scope, b"cookie").split(";"):
+        name, separator, value = part.strip().partition("=")
+        if separator and name == COOKIE_NAME:
+            return value
+    return ""
+
+
+class AuthMiddleware:
+    """Reject unauthenticated HTTP and WebSocket traffic, except public assets."""
+
+    def __init__(
+        self,
+        app,
+        *,
+        auth: AuthStore,
+        settings: Settings,
+    ):
+        self.app = app
+        self.auth = auth
+        self.settings = settings
+
+    def _session(self, scope: dict) -> dict | None:
+        token = session_token(scope)
+        if not token:
+            return None
+        return verify_session(self.auth.secret, token)
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] not in {"http", "websocket"}:
+            await self.app(scope, receive, send)
+            return
+        path = scope.get("path", "")
+        if path in PUBLIC_PATHS:
+            await self.app(scope, receive, send)
+            return
+        session = self._session(scope)
+        if session:
+            scope.setdefault("state", {})["session"] = session
+            await self.app(scope, receive, send)
+            return
+        if scope["type"] == "websocket":
+            await send({"type": "websocket.close", "code": 1008})
+            return
+        if path == "/api" or path.startswith("/api/"):
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": 401,
+                    "headers": [
+                        (b"content-type", b"application/json; charset=utf-8"),
+                        (b"content-length", b"22"),
+                    ],
+                }
+            )
+            await send(
+                {
+                    "type": "http.response.body",
+                    "body": '{"detail":"请先登录。"}'.encode(),
+                }
+            )
+            return
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 302,
+                "headers": [(b"location", b"/login"), (b"content-length", b"0")],
+            }
+        )
+        await send({"type": "http.response.body", "body": b""})
+
 
 class StartRequest(BaseModel):
     room: str = Field(min_length=1, max_length=2048)
     realtime_analysis: bool = False
+
+
+class LoginRequest(BaseModel):
+    password: str = Field(min_length=1, max_length=256)
+
+
+class PasswordChangeRequest(BaseModel):
+    current: str = Field(min_length=1, max_length=256)
+    new: str = Field(min_length=12, max_length=256)
 
 
 class RealtimeRequest(BaseModel):
@@ -40,8 +166,15 @@ def create_app(
     settings: Settings | None = None,
     monitor: Monitor | None = None,
     analysis: AnalysisService | None = None,
+    auth: AuthStore | None = None,
+    preferences=None,
+    limiter: LoginLimiter | None = None,
 ) -> FastAPI:
     settings = settings or Settings.from_env()
+    auth = auth or AuthStore(settings.auth_path)
+    if not auth.exists():
+        raise RuntimeError("尚未设置登录密码，请先运行 ./scripts/setup.sh 或 init-auth。")
+    limiter = limiter or LoginLimiter()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -68,7 +201,11 @@ def create_app(
                 store.close()
 
     app = FastAPI(title="抖音直播监听守卫", lifespan=lifespan)
-    app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost"])
+    app.state.auth = auth
+    app.state.limiter = limiter
+    app.state.preferences = preferences
+    app.add_middleware(AuthMiddleware, auth=auth, settings=settings)
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=list(settings.allowed_hosts))
 
     @app.middleware("http")
     async def local_only(request, call_next):
@@ -76,11 +213,74 @@ def create_app(
         # Local browser requests have a matching Origin or no Origin.
         origin = request.headers.get("origin")
         if request.method not in {"GET", "HEAD", "OPTIONS"} and origin:
-            if origin != f"{request.url.scheme}://{request.headers.get('host', '')}":
-                from fastapi.responses import JSONResponse
-
+            scheme = request_scheme(request.scope, settings)
+            expected = f"{scheme}://{request.headers.get('host', '')}"
+            if origin != expected:
                 return JSONResponse({"detail": "不允许来自其他网站的操作。"}, status_code=403)
         return await call_next(request)
+
+    def cookie_secure(scope: dict) -> bool:
+        if settings.secure_cookies == "always":
+            return True
+        if settings.secure_cookies == "never":
+            return False
+        return request_scheme(scope, settings) == "https"
+
+    @app.post("/api/login")
+    async def login(body: LoginRequest, request: Request):
+        ip = client_ip(request.scope, settings)
+        retry_after = app.state.limiter.retry_after(ip)
+        if retry_after:
+            return JSONResponse(
+                {"detail": "尝试次数过多，请稍后再试。"},
+                status_code=429,
+                headers={"Retry-After": str(retry_after)},
+            )
+        if not app.state.auth.verify(body.password):
+            app.state.limiter.fail(ip)
+            raise HTTPException(401, "密码错误。")
+        app.state.limiter.reset(ip)
+        expires_at = int(time.time()) + settings.session_days * 86_400
+        token = sign_session(app.state.auth.secret, app.state.auth.username, expires_at)
+        response = JSONResponse(
+            {
+                "authenticated": True,
+                "username": app.state.auth.username,
+                "expires_at": expires_at,
+            }
+        )
+        response.set_cookie(
+            COOKIE_NAME,
+            token,
+            max_age=settings.session_days * 86_400,
+            httponly=True,
+            samesite="lax",
+            secure=cookie_secure(request.scope),
+            path=SESSION_COOKIE_PATH,
+        )
+        return response
+
+    @app.get("/api/auth")
+    async def get_auth(request: Request):
+        session = request.state.session
+        return {
+            "authenticated": True,
+            "username": session["u"],
+            "expires_at": session["exp"],
+        }
+
+    @app.post("/api/logout")
+    async def logout():
+        response = JSONResponse({"authenticated": False})
+        response.delete_cookie(COOKIE_NAME, path=SESSION_COOKIE_PATH)
+        return response
+
+    @app.post("/api/password")
+    async def change_password(body: PasswordChangeRequest):
+        if not app.state.auth.verify(body.current):
+            raise HTTPException(400, "当前密码不正确。")
+        app.state.auth.set_password(body.new)
+        return {"ok": True}
 
     @app.get("/api/monitor")
     async def get_monitor():
@@ -110,7 +310,7 @@ def create_app(
     async def local_audio(websocket: WebSocket):
         origin = websocket.headers.get("origin")
         host = websocket.headers.get("host", "")
-        if origin and origin != f"http://{host}":
+        if origin and origin != f"{request_scheme(websocket.scope, settings)}://{host}":
             await websocket.close(code=1008)
             return
         source = websocket.query_params.get("source", "microphone")

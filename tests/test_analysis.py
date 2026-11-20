@@ -6,7 +6,7 @@ from dataclasses import replace
 from datetime import datetime
 
 import pytest
-from conftest import FakeCapture, FakeSource, eventually
+from conftest import FakeCapture, FakeSource, eventually, login
 from fastapi.testclient import TestClient
 
 from douyin_live_sense.analysis import AnalysisService
@@ -303,7 +303,7 @@ def test_documents_are_rebuildable_and_audio_spans_match(analysis_settings):
     store.close()
 
 
-def test_analysis_api_incremental_docs_and_audio(analysis_settings):
+def test_analysis_api_incremental_docs_and_audio(analysis_settings, auth):
     import io
     import time
     import wave
@@ -313,7 +313,10 @@ def test_analysis_api_incremental_docs_and_audio(analysis_settings):
     monitor = Monitor(store, settings, FakeSource(), FakeCapture())
     worker = FixtureWorker(settings.data_dir)
     service = AnalysisService(monitor, settings, worker, lambda: {"ready": True, "reason": ""})
-    with TestClient(create_app(settings, monitor, service), base_url="http://127.0.0.1") as client:
+    with TestClient(
+        create_app(settings, monitor, service, auth=auth), base_url="http://127.0.0.1"
+    ) as client:
+        login(client)
         assert client.get("/api/analysis/status").json()["worker_state"] == "idle"
         assert client.put("/api/analysis/realtime", json={"enabled": True}).status_code == 409
         assert client.post("/api/sessions/missing/analysis").status_code == 404

@@ -9,6 +9,16 @@ from douyin_live_sense.model_manager import (
 
 def test_start_download_requires_token_for_diarization(settings, monkeypatch):
     monkeypatch.setattr("douyin_live_sense.model_manager.analysis_supported", lambda: (True, ""))
+    monkeypatch.setattr(
+        "douyin_live_sense.model_manager.model_status",
+        lambda settings: {
+            "components": {
+                "dependencies": {"ready": True, "reason": ""},
+                "transcription": {"ready": False, "missing": ["asr", "punctuation"]},
+                "diarization": {"ready": False, "missing": ["diarization"]},
+            }
+        },
+    )
     monkeypatch.delenv("HF_TOKEN", raising=False)
     manager = ModelManager(settings)
     with pytest.raises(TokenRequired):
@@ -63,6 +73,16 @@ def test_failed_download_is_visible(settings, monkeypatch):
 
     monkeypatch.setattr("douyin_live_sense.model_manager.prepare_model", fail)
     monkeypatch.setattr("douyin_live_sense.model_manager.expected_bytes", lambda *a, **k: 10)
+    monkeypatch.setattr(
+        "douyin_live_sense.model_manager.model_status",
+        lambda settings: {
+            "components": {
+                "dependencies": {"ready": True, "reason": ""},
+                "transcription": {"ready": False, "missing": ["asr", "punctuation"]},
+                "diarization": {"ready": False, "missing": ["diarization"]},
+            }
+        },
+    )
     manager = ModelManager(settings)
     manager.start_download(["transcription"])
     manager._thread.join(timeout=2)

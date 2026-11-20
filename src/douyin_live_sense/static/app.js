@@ -723,15 +723,24 @@ async function jumpTo(task) {
   if (clip) { clip.root.open = true; await loadClip(clip); clip.root.scrollIntoView({ block: "center" }); }
   else view.root.scrollIntoView({ block: "start" });
 }
+function routeViewState(hash) {
+  const route = hash === "#/queue" ? "queue" : hash === "#/models" ? "models" : "home";
+  return {
+    route,
+    views: { home: route !== "home", queue: route !== "queue", models: route !== "models" },
+    nav: { home: route === "home" ? "page" : "false", queue: route === "queue" ? "page" : "false", models: route === "models" ? "page" : "false" },
+  };
+}
 function route() {
   setMenuOpen(false);
-  state.route = location.hash === "#/queue" ? "queue" : location.hash === "#/models" ? "models" : "home";
-  $("home-view").hidden = state.route !== "home";
-  $("queue-view").hidden = state.route !== "queue";
-  $("models-view").hidden = state.route !== "models";
-  $("nav-home").setAttribute("aria-current", state.route === "home" ? "page" : "false");
-  $("nav-queue").setAttribute("aria-current", state.route === "queue" ? "page" : "false");
-  $("nav-models").setAttribute("aria-current", state.route === "models" ? "page" : "false");
+  const routed = routeViewState(location.hash);
+  state.route = routed.route;
+  $("home-view").hidden = routed.views.home;
+  $("queue-view").hidden = routed.views.queue;
+  $("models-view").hidden = routed.views.models;
+  $("nav-home").setAttribute("aria-current", routed.nav.home);
+  $("nav-queue").setAttribute("aria-current", routed.nav.queue);
+  $("nav-models").setAttribute("aria-current", routed.nav.models);
   loadQueue().catch((error) => notice(error.message));
 }
 function workletUrl() {

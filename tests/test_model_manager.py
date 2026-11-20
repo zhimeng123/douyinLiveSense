@@ -37,8 +37,9 @@ def test_progress_counts_existing_bytes(settings):
         "finished_at": None,
         "error": "",
         "current": "asr",
+        "revisions": {"asr": "current-rev"},
     }
-    target = settings.data_dir / "models" / "asr" / "rev"
+    target = settings.data_dir / "models" / "asr" / "current-rev"
     target.mkdir(parents=True)
     (target / "half.bin").write_bytes(b"x" * 40)
     (target / "ignored.onnx").write_bytes(b"x" * 50)
@@ -46,6 +47,33 @@ def test_progress_counts_existing_bytes(settings):
     cache.mkdir()
     (cache / "metadata.json").write_bytes(b"x" * 50)
     result = manager.job()
+    assert result["downloaded_bytes"] == 40
+    assert 39 <= result["percent"] <= 41
+
+
+def test_progress_ignores_orphaned_model_revisions(settings):
+    manager = ModelManager(settings)
+    manager._job = {
+        "id": "job-1",
+        "state": "running",
+        "parts": ["transcription"],
+        "names": ["asr"],
+        "revisions": {"asr": "current-rev"},
+        "total_bytes": 100,
+        "started_at": "t",
+        "finished_at": None,
+        "error": "",
+        "current": "asr",
+    }
+    current = settings.data_dir / "models" / "asr" / "current-rev"
+    current.mkdir(parents=True)
+    (current / "half.bin").write_bytes(b"x" * 40)
+    orphan = settings.data_dir / "models" / "asr" / "old-rev"
+    orphan.mkdir(parents=True)
+    (orphan / "orphaned.bin").write_bytes(b"x" * 60)
+
+    result = manager.job()
+
     assert result["downloaded_bytes"] == 40
     assert 39 <= result["percent"] <= 41
 

@@ -39,13 +39,18 @@ def _matches_ignored(name: str) -> bool:
     return any(fnmatch.fnmatch(name, pattern) for pattern in IGNORE_PATTERNS)
 
 
-def expected_bytes(settings, names: list[str], token: str | None) -> int:
+def expected_bytes(
+    settings, names: list[str], token: str | None, revisions: dict[str, str] | None = None
+) -> int:
     from huggingface_hub import HfApi
 
     total = 0
     api = HfApi(token=token)
     for name in names:
         info = api.model_info(MODEL_REPOS[name], files_metadata=True)
+        revision = getattr(info, "sha", None)
+        if revisions is not None and revision:
+            revisions[name] = revision
         for sibling in getattr(info, "siblings", ()) or ():
             filename = getattr(sibling, "rfilename", "")
             size = getattr(sibling, "size", None)
@@ -146,12 +151,15 @@ class ModelManager:
         with self._lock:
             if self._job and self._job["state"] == "running":
                 raise DownloadConflict("已有模型下载任务正在运行。")
+            revisions = {}
+            total_bytes = expected_bytes(self.settings, names, token, revisions)
             job = {
                 "id": f"job-{uuid.uuid4().hex}",
                 "state": "running",
                 "parts": list(parts),
                 "names": names,
-                "total_bytes": expected_bytes(self.settings, names, token),
+                "total_bytes": total_bytes,
+                "revisions": revisions,
                 "started_at": _now(),
                 "finished_at": None,
                 "error": "",
@@ -187,7 +195,11 @@ class ModelManager:
             model_root = root / name
             if not model_root.is_dir():
                 continue
-            for path in model_root.rglob("*"):
+            revision = job.get("revisions", {}).get(name)
+            count_root = model_root / revision if revision else model_root
+            if not count_root.is_dir():
+                continue
+            for path in count_root.rglob("*"):
                 if (
                     path.is_file()
                     and ".cache" not in path.parts

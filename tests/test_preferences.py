@@ -45,6 +45,15 @@ def test_update_rejects_unknown_mode(tmp_path):
         Preferences(tmp_path / "preferences.json").update(mode="auto")
 
 
+@pytest.mark.parametrize("payload", [{"version": "2"}, {"version": None}, {"version": []}])
+def test_unreadable_version_uses_defaults(tmp_path, payload):
+    path = tmp_path / "preferences.json"
+    path.write_text(json.dumps(payload))
+    prefs = Preferences(path, default_segment_seconds=30)
+    assert prefs.mode() == "record"
+    assert prefs.segment_seconds() == 30
+
+
 def test_api_refuses_enabling_without_models(settings, auth, monkeypatch):
     monkeypatch.setattr(
         "douyin_live_sense.app.model_status",
@@ -123,6 +132,38 @@ def test_mode_cannot_change_while_task_running(build_app, monkeypatch):
         assert response.status_code == 409
         assert client.get("/api/preferences").json()["locked"] is True
         assert client.put("/api/preferences", json={"segment_seconds": 8}).status_code == 200
+
+
+def test_rejected_update_leaves_stored_preferences_untouched(build_app):
+    client = TestClient(build_app(), base_url="http://127.0.0.1")
+    with client:
+        login(client)
+        assert client.put("/api/preferences", json={"segment_seconds": 7}).status_code == 200
+        assert client.put("/api/preferences", json={"segment_seconds": 14_401}).status_code == 422
+        assert client.put("/api/preferences", json={"mode": "feishu"}).status_code == 409
+        body = client.get("/api/preferences").json()
+        assert body["mode"] == "record"
+        assert body["segment_seconds"] == 7
+
+
+def test_injected_monitor_uses_saved_duration(build_app):
+    client = TestClient(build_app(), base_url="http://127.0.0.1")
+    with client:
+        login(client)
+        assert client.put("/api/preferences", json={"segment_seconds": 9}).status_code == 200
+        assert client.app.state.monitor.segment_seconds() == 9
+
+
+def test_legacy_preferences_file_is_migrated_on_read(build_app, settings):
+    (settings.data_dir / "preferences.json").write_text(
+        json.dumps({"version": 1, "recognition": True})
+    )
+    client = TestClient(build_app(), base_url="http://127.0.0.1")
+    with client:
+        login(client)
+        body = client.get("/api/preferences").json()
+        assert body["mode"] == "models"
+        assert body["recognition"] is True
 
 
 def test_analysis_request_is_noop_when_disabled(settings):

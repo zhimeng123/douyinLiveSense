@@ -73,6 +73,11 @@ function formatBytes(value) {
   return `${(value / (1024 ** index)).toFixed(index >= 3 ? 1 : 0)} ${units[index]}`;
 }
 let segmentUnit = "seconds";
+function segmentSecondsFrom(value, unit) {
+  // 分钟带小数时 float 误差会让 4.1 * 60 = 245.999…，先取整再校验。
+  return unit === "minutes" ? Math.round(value * 60) : value;
+}
+
 function setSegmentNotice(message) {
   const element = $("segment-error");
   element.textContent = message || "";
@@ -83,7 +88,7 @@ function updateSegmentLimits() {
   if (segmentUnit === "minutes") {
     input.min = "1";
     input.max = "240";
-    input.step = "1";
+    input.step = "0.1";
   } else {
     input.min = "1";
     input.max = "14400";
@@ -253,7 +258,7 @@ async function saveSegmentSeconds() {
     setSegmentNotice("请输入大于 0 的切片时长。");
     return;
   }
-  const seconds = segmentUnit === "minutes" ? value * 60 : value;
+  const seconds = segmentSecondsFrom(value, segmentUnit);
   if (!Number.isInteger(seconds) || seconds < 1 || seconds > 14400) {
     setSegmentNotice("切片时长必须在 1 秒到 14400 秒之间，且为整数秒。");
     return;
@@ -379,6 +384,7 @@ function renderMonitor(data) {
   $("room").disabled = data.enabled || state.busy;
   if (data.enabled) $("room").value = data.room_id;
   $("analyse-current").disabled = state.analysisBusy || !data.session_id;
+  updateBadge();
   notice(data.last_error || state.actionError);
 }
 // Stable nodes preserve disclosure, scroll and media state during polling.
@@ -619,7 +625,7 @@ async function post(path, body) {
 }
 async function requestSession(id, retry = false) {
   if (!state.recognition) {
-    showModelError("当前为仅录音模式，请先开启完整识别。");
+    showModelError("当前为仅录音模式，请先在“网站配置 → 识别方式配置”选择“下载模型识别”。");
     return;
   }
   let view = state.sessions.get(id);
@@ -672,7 +678,7 @@ async function requestSession(id, retry = false) {
 }
 async function requestClip(clip, reanalyse = false, retry = false) {
   if (!state.recognition) {
-    showModelError("当前为仅录音模式，请先开启完整识别。");
+    showModelError("当前为仅录音模式，请先在“网站配置 → 识别方式配置”选择“下载模型识别”。");
     return;
   }
   clip.busy = true;
@@ -1113,7 +1119,7 @@ $("segment-unit").onchange = () => {
   const next = $("segment-unit").value;
   const value = Number($("segment-seconds").value);
   if (Number.isFinite(value)) {
-    const seconds = segmentUnit === "minutes" ? value * 60 : value;
+    const seconds = segmentSecondsFrom(value, segmentUnit);
     $("segment-seconds").value = next === "minutes"
       ? String(Math.round(seconds / 6) / 10)
       : String(Math.round(seconds));

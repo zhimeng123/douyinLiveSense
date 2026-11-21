@@ -212,6 +212,9 @@ def create_app(
             app.state.monitor = monitor or Monitor(
                 store, settings, preferences=preferences
             )
+            if getattr(app.state.monitor, "preferences", None) is None:
+                # 注入的 Monitor 也要读同一份偏好，否则切片时长会静默回落到环境默认值。
+                app.state.monitor.preferences = preferences
             app.state.store = store
             await app.state.monitor.restore()
             app.state.analysis = analysis or AnalysisService(
@@ -325,7 +328,7 @@ def create_app(
     @app.post("/api/monitor/start")
     async def start_monitor(body: StartRequest):
         if body.realtime_analysis and not app.state.preferences.enabled():
-            raise HTTPException(409, "请先在语音识别卡片开启完整识别。")
+            raise HTTPException(409, "请先在“网站配置 → 识别方式配置”选择“下载模型识别”。")
         try:
             result = await app.state.monitor.start(body.room, body.realtime_analysis)
             app.state.analysis.sync_live()
@@ -410,7 +413,7 @@ def create_app(
     @app.put("/api/analysis/realtime")
     async def set_realtime(body: RealtimeRequest):
         if body.enabled and not app.state.preferences.enabled():
-            raise HTTPException(409, "请先在语音识别卡片开启完整识别。")
+            raise HTTPException(409, "请先在“网站配置 → 识别方式配置”选择“下载模型识别”。")
         try:
             return await app.state.analysis.set_realtime(body.enabled)
         except MonitorConflict as error:
@@ -441,7 +444,7 @@ def create_app(
         if not app.state.store.session(session_id):
             raise HTTPException(404, "场次不存在。")
         if not app.state.preferences.enabled():
-            raise HTTPException(409, "请先在语音识别卡片开启完整识别。")
+            raise HTTPException(409, "请先在“网站配置 → 识别方式配置”选择“下载模型识别”。")
         try:
             return app.state.analysis.request(session_id, body.retry if body else False)
         except KeyError as error:
@@ -490,7 +493,7 @@ def create_app(
     async def start_segment_analysis(segment_id: str, body: SegmentAnalysisRequest | None = None):
         require_segment(segment_id)
         if not app.state.preferences.enabled():
-            raise HTTPException(409, "请先在语音识别卡片开启完整识别。")
+            raise HTTPException(409, "请先在“网站配置 → 识别方式配置”选择“下载模型识别”。")
         body = body or SegmentAnalysisRequest()
         return app.state.analysis.request_segment(segment_id, body.reanalyse, body.retry)
 

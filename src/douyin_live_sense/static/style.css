@@ -717,8 +717,6 @@ footer {
 .models-card { margin: 20px 0; border: 1px solid var(--border); border-radius: 16px; background: #fff; overflow: hidden; }
 .models-card .card-heading { border-bottom: 1px solid var(--border); }
 .models-card .card-heading p { margin: 6px 0 0; }
-.models-toggle { display: flex; align-items: center; gap: 9px; margin: 0; color: #314b3e; font-size: 13px; font-weight: 600; }
-.models-toggle input { flex: none; width: 18px; height: 18px; accent-color: var(--green); }
 .models-content { padding: 0 30px 26px; }
 .mode-options { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 20px 0 4px; }
 .mode-option {

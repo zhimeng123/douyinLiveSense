@@ -57,6 +57,21 @@ def test_monitor_uses_segment_seconds_from_preferences(settings):
     store.close()
 
 
+def test_writer_re_reads_segment_seconds_between_segments(settings):
+    prefs = Preferences(settings.data_dir / "preferences.json", default_segment_seconds=0.002)
+    store = Storage(settings.data_dir)
+    session = store.create_session("123", "live-1", "主播", "标题")
+    writer = SegmentWriter(store, settings, session["id"], segment_seconds=prefs.segment_seconds)
+    writer.feed(b"\x01\x02" * 32, utc_now())
+    assert store.totals(session["id"])[0] == 1
+    prefs.update(segment_seconds=1)
+    writer.feed(b"\x03\x04" * 16000, utc_now())
+    writer.close()
+    # 已开始的切片沿用旧时长；新时长从下一段开始生效。
+    assert [s["sample_count"] for s in store.segments(session["id"])] == [32, 16000]
+    store.close()
+
+
 def test_sample_exact_segments_odd_reads_and_tail(settings):
     store = Storage(settings.data_dir)
     session, writer = create_writer(store, settings)

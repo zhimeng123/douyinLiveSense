@@ -4,6 +4,7 @@ import os
 import shutil
 import wave
 from collections import deque
+from collections.abc import Callable
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -20,7 +21,13 @@ class DiskFull(NeedsAttention):
 
 
 class SegmentWriter:
-    def __init__(self, store: Storage, settings: Settings, session_id: str, segment_seconds=None):
+    def __init__(
+        self,
+        store: Storage,
+        settings: Settings,
+        session_id: str,
+        segment_seconds: float | Callable[[], float] | None = None,
+    ):
         self.store = store
         self.settings = settings
         self.session_id = session_id
@@ -32,10 +39,20 @@ class SegmentWriter:
         self.wav = None
         self.file = None
         self.remainder = b""
-        seconds = settings.segment_seconds if segment_seconds is None else segment_seconds
-        self.max_samples = max(1, round(seconds * settings.sample_rate))
+        # 传函数时每段重新取值，这样修改时长后从下一段切片开始生效。
+        self.segment_seconds = segment_seconds
+        self.max_samples = self._segment_samples()
+
+    def _segment_samples(self) -> int:
+        seconds = self.segment_seconds
+        if callable(seconds):
+            seconds = seconds()
+        if seconds is None:
+            seconds = self.settings.segment_seconds
+        return max(1, round(seconds * self.settings.sample_rate))
 
     def _open(self) -> None:
+        self.max_samples = self._segment_samples()
         if shutil.disk_usage(self.store.data_dir).free < self.settings.min_free_bytes:
             raise DiskFull("剩余磁盘空间不足 1 GB，已停止采集。请释放空间后重新启动守卫。")
         self.segment = self.store.reserve_segment(

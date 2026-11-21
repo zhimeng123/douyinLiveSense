@@ -49,7 +49,8 @@ def test_settings_view_hosts_recognition_modes_and_duration():
     ):
         assert f'id="{element}"' in html
     assert parser.parents["models-card"] == "settings-view"
-    assert "segment-seconds" in parser.descendants["settings-view"]
+    assert parser.parents["segment-seconds"] == "duration-card"
+    assert parser.parents["duration-card"] == "settings-view"
     assert "models-switch" not in html
     assert "网站配置" in html
 
@@ -124,6 +125,9 @@ process.stdout.write(JSON.stringify(result));
 
 
 class _IdParentParser(HTMLParser):
+    VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input",
+            "link", "meta", "param", "source", "track", "wbr"}
+
     def __init__(self):
         super().__init__()
         self.stack = []
@@ -139,7 +143,8 @@ class _IdParentParser(HTMLParser):
             for _, ancestor_id in self.stack:
                 if ancestor_id:
                     self.descendants[ancestor_id].add(element_id)
-        self.stack.append((tag, element_id))
+        if tag not in self.VOID:
+            self.stack.append((tag, element_id))
 
     def handle_endtag(self, tag):
         for index in range(len(self.stack) - 1, -1, -1):
@@ -192,6 +197,104 @@ process.stdout.write(JSON.stringify(result));
     rendered = json.loads(completed.stdout)
     assert rendered["withTime"] == ["11:51:54", {"tag": "small", "text": "北京时间"}]
     assert rendered["withoutTime"] == ["—"]
+
+
+BADGE_HARNESS_HEAD = """
+const registry = {};
+function $(id) {
+  return (registry[id] ||= {
+    textContent: "", className: "", hidden: false, disabled: false, checked: false,
+    value: "", title: "", children: [],
+    replaceChildren(...items) { this.children = items; },
+    insertBefore() {}, remove() {},
+    setAttribute(name, value) { this[name] = value; },
+  });
+}
+function node(tag, text) { return { tag, text }; }
+function duration() { return "00:00:00"; }
+function audioTime() {}
+function notice() {}
+const document = { createTextNode: (text) => text };
+const state = {
+  monitor: null, monitorEnabled: false, lastMode: undefined, homeTab: "douyin",
+  busy: false, analysisBusy: false, actionError: null,
+};
+"""
+
+BADGE_HARNESS_TAIL = """
+const base = {
+  enabled: false, mode: null, state: "stopped", segment_seconds: 30, segment_count: 0,
+  captured_seconds: 0, retry_in_seconds: null, data_dir: "/data", room_id: "123",
+  anchor_name: "", title: "", last_error: null, last_audio_at: null,
+};
+const badge = () => $("state").textContent;
+const seen = {};
+renderMonitor({ ...base });
+seen.idle = badge();
+renderMonitor({ ...base, enabled: true, mode: "douyin", state: "waiting" });
+seen.waiting = badge();
+renderMonitor({ ...base, enabled: true, mode: "douyin", state: "recording" });
+seen.recording = badge();
+renderMonitor({ ...base, enabled: true, mode: "douyin", state: "reconnecting" });
+seen.reconnecting = badge();
+renderMonitor({ ...base });
+seen.stoppedAgain = badge();
+renderMonitor({ ...base, enabled: true, mode: "local", state: "recording" });
+seen.local = badge();
+process.stdout.write(JSON.stringify(seen));
+"""
+
+
+def test_capture_badge_follows_monitor_state(tmp_path):
+    js = (STATIC / "app.js").read_text()
+    labels_src = js[js.index("const labels ="):js.index("const analysisLabels")]
+    render_src = js[js.index("function secondsLabel"):js.index("// Stable nodes preserve")]
+    script_path = tmp_path / "badge-harness.cjs"
+    script_path.write_text(BADGE_HARNESS_HEAD + labels_src + "\n" + render_src + BADGE_HARNESS_TAIL)
+    completed = subprocess.run(
+        ["node", str(script_path)], capture_output=True, text=True, check=False
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) == {
+        "idle": "已停止",
+        "waiting": "等待开播",
+        "recording": "正在采集",
+        "reconnecting": "正在重新连接",
+        "stoppedAgain": "已停止",
+        "local": "正在采集",
+    }
+
+
+def test_segment_seconds_helper_rounds_minutes_to_whole_seconds():
+    js = (STATIC / "app.js").read_text()
+    start = js.index("function segmentSecondsFrom")
+    end = js.index("\n}\n", start) + 3
+    helper = js[start:end]
+    script = f"""
+{helper}
+const result = [4.1, 8.2, 8.3, 0.5, 240].map((value) => segmentSecondsFrom(value, "minutes"));
+const raw = [5, 14400].map((value) => segmentSecondsFrom(value, "seconds"));
+process.stdout.write(JSON.stringify({{ minutes: result, seconds: raw }}));
+"""
+    completed = subprocess.run(["node", "-e", script], capture_output=True, text=True, check=False)
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) == {
+        "minutes": [246, 492, 498, 30, 14400],
+        "seconds": [5, 14400],
+    }
+
+
+def test_no_stale_recognize_card_copy():
+    paths = {
+        "app.py": STATIC.parent / "app.py",
+        "app.js": STATIC / "app.js",
+        "index.html": STATIC / "index.html",
+    }
+    for name, path in paths.items():
+        text = path.read_text()
+        assert "完整识别" not in text, name
+        assert "语音识别卡片" not in text, name
+
 
 
 def test_app_js_calls_model_endpoints():

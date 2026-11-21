@@ -5,6 +5,7 @@ import time
 
 from .audio import FFmpegCapture, SegmentWriter
 from .config import Settings
+from .preferences import Preferences
 from .security import redact
 from .source import DouyinSource, LiveSource, NeedsAttention, SourceError, normalize_room
 from .storage import Storage, utc_now
@@ -23,7 +24,7 @@ class Monitor:
         settings: Settings,
         source: LiveSource | None = None,
         capture: FFmpegCapture | None = None,
-        preferences=None,
+        preferences: Preferences | None = None,
     ):
         self.store = store
         self.settings = settings
@@ -125,7 +126,7 @@ class Monitor:
             self.store.set_guard("local", False)
             self.writer = SegmentWriter(
                 self.store, self.settings, self.session["id"],
-                segment_seconds=self.segment_seconds(),
+                segment_seconds=self.segment_seconds,
             )
             return self.status()
 
@@ -239,7 +240,7 @@ class Monitor:
                         )
                     self.writer = SegmentWriter(
                         self.store, self.settings, self.session["id"],
-                        segment_seconds=self.segment_seconds(),
+                        segment_seconds=self.segment_seconds,
                     )
                     try:
                         await self.capture.run(room, self.writer, self._on_audio)

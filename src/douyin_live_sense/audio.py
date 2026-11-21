@@ -20,7 +20,7 @@ class DiskFull(NeedsAttention):
 
 
 class SegmentWriter:
-    def __init__(self, store: Storage, settings: Settings, session_id: str):
+    def __init__(self, store: Storage, settings: Settings, session_id: str, segment_seconds=None):
         self.store = store
         self.settings = settings
         self.session_id = session_id
@@ -32,7 +32,8 @@ class SegmentWriter:
         self.wav = None
         self.file = None
         self.remainder = b""
-        self.max_samples = round(settings.segment_seconds * settings.sample_rate)
+        seconds = settings.segment_seconds if segment_seconds is None else segment_seconds
+        self.max_samples = max(1, round(seconds * settings.sample_rate))
 
     def _open(self) -> None:
         if shutil.disk_usage(self.store.data_dir).free < self.settings.min_free_bytes:

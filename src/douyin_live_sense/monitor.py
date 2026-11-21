@@ -23,9 +23,11 @@ class Monitor:
         settings: Settings,
         source: LiveSource | None = None,
         capture: FFmpegCapture | None = None,
+        preferences=None,
     ):
         self.store = store
         self.settings = settings
+        self.preferences = preferences
         self.source = source or DouyinSource(settings.cookie, settings.resolve_seconds)
         self.capture = capture or FFmpegCapture(settings)
         self.lock = asyncio.Lock()
@@ -121,8 +123,16 @@ class Monitor:
             self.state = "recording"
             self.store.set_realtime(realtime_analysis)
             self.store.set_guard("local", False)
-            self.writer = SegmentWriter(self.store, self.settings, self.session["id"])
+            self.writer = SegmentWriter(
+                self.store, self.settings, self.session["id"],
+                segment_seconds=self.segment_seconds(),
+            )
             return self.status()
+
+    def segment_seconds(self) -> float:
+        if self.preferences is None:
+            return float(self.settings.segment_seconds)
+        return float(self.preferences.segment_seconds())
 
     def feed_local(self, pcm: bytes) -> None:
         if self.mode != "local" or not self.enabled or self.writer is None:
@@ -227,7 +237,10 @@ class Monitor:
                         self.session = self.store.create_session(
                             self.room_id, room.source_live_id, room.anchor_name, room.title
                         )
-                    self.writer = SegmentWriter(self.store, self.settings, self.session["id"])
+                    self.writer = SegmentWriter(
+                        self.store, self.settings, self.session["id"],
+                        segment_seconds=self.segment_seconds(),
+                    )
                     try:
                         await self.capture.run(room, self.writer, self._on_audio)
                         raise SourceError("采集连接已关闭，重新检查直播状态。")
@@ -295,6 +308,7 @@ class Monitor:
             "last_error": self.last_error,
             "segment_count": count,
             "captured_seconds": seconds,
+            "segment_seconds": self.segment_seconds(),
             "retry_in_seconds": max(0, self.retry_deadline - time.monotonic())
             if self.retry_deadline
             else None,

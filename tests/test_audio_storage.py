@@ -7,7 +7,7 @@ from dataclasses import replace
 from datetime import datetime
 
 import pytest
-from conftest import eventually
+from conftest import FakeCapture, FakeSource, eventually
 
 from douyin_live_sense.audio import (
     DiskFull,
@@ -15,6 +15,8 @@ from douyin_live_sense.audio import (
     SegmentWriter,
     reauthentication_required,
 )
+from douyin_live_sense.monitor import Monitor
+from douyin_live_sense.preferences import Preferences
 from douyin_live_sense.source import RoomInfo, SourceError
 from douyin_live_sense.storage import InstanceLock, Storage, utc_now
 
@@ -32,6 +34,27 @@ def read_all(store, session_id):
             assert wav.getframerate() == 16000 and wav.getnchannels() == 1
             contents.append(wav.readframes(wav.getnframes()))
     return b"".join(contents)
+
+
+def test_writer_honours_explicit_segment_seconds(settings):
+    store = Storage(settings.data_dir)
+    session = store.create_session("123", "live-1", "主播", "标题")
+    writer = SegmentWriter(store, settings, session["id"], segment_seconds=0.004)
+    writer.feed(b"\x01\x02" * 160, utc_now())
+    assert store.totals(session["id"])[0] == 2
+    writer.close()
+    assert [s["sample_count"] for s in store.segments(session["id"])] == [64, 64, 32]
+    store.close()
+
+
+def test_monitor_uses_segment_seconds_from_preferences(settings):
+    prefs = Preferences(settings.data_dir / "preferences.json")
+    prefs.update(segment_seconds=7)
+    store = Storage(settings.data_dir)
+    monitor = Monitor(store, settings, FakeSource(), FakeCapture(), preferences=prefs)
+    assert monitor.segment_seconds() == 7
+    assert monitor.status()["segment_seconds"] == 7
+    store.close()
 
 
 def test_sample_exact_segments_odd_reads_and_tail(settings):

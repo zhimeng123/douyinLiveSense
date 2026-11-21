@@ -209,7 +209,9 @@ def create_app(
             settings.data_dir.mkdir(parents=True, exist_ok=True)
             instance_lock = InstanceLock(store.data_dir if store else settings.data_dir)
             store = store or Storage(settings.data_dir)
-            app.state.monitor = monitor or Monitor(store, settings)
+            app.state.monitor = monitor or Monitor(
+                store, settings, preferences=preferences
+            )
             app.state.store = store
             await app.state.monitor.restore()
             app.state.analysis = analysis or AnalysisService(

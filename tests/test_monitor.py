@@ -57,6 +57,23 @@ async def test_wait_start_live_then_offline_keeps_guard_enabled(settings):
         store.close()
 
 
+async def test_offline_end_removes_transient_gap(settings):
+    store = Storage(settings.data_dir)
+    source = FakeSource(live_room(), RoomInfo("123", False, anchor_name="主播"))
+    capture = FakeCapture((b"\x01\x02" * 8, DISCONNECT))
+    monitor = Monitor(store, settings, source, capture)
+    try:
+        await monitor.start("123")
+        await eventually(lambda: monitor.state == "waiting")
+        session = store.sessions()[0]
+        assert session["end_reason"] == "offline" and session["ended_at"]
+        assert not [event for event in store.events(session["id"]) if event["kind"] == "gap"]
+        assert store.totals(session["id"])[0] == 1
+    finally:
+        await monitor.stop()
+        store.close()
+
+
 async def test_reconnect_preserves_session_new_epoch_and_gap(settings):
     store = Storage(settings.data_dir)
     capture = FakeCapture((b"\x01\x02" * 8, DISCONNECT), (b"\x03\x04" * 8, None))

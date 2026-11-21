@@ -45,6 +45,7 @@ class Monitor:
         self.retry_deadline: float | None = None
         self.writer: SegmentWriter | None = None
         self.retry_index = 0
+        self.transient_gap_id: int | None = None
         self.mode: str | None = None
         self.local_source: str | None = None
 
@@ -194,12 +195,16 @@ class Monitor:
 
     def _finish_session(self, reason: str) -> None:
         if self.session:
+            if reason == "offline" and self.transient_gap_id is not None:
+                self.store.delete_event(self.transient_gap_id)
+            self.transient_gap_id = None
             self.store.finish_session(self.session["id"], reason)
             self.session = None
 
     def _on_audio(self, received_at: str) -> None:
         if self.state != "recording":
             self.store.close_gap(self.session["id"], received_at)
+            self.transient_gap_id = None
             logger.info("开始采集直播间 %s，场次 %s", self.room_id, self.session["id"])
         self.state = "recording"
         self.last_audio_at = received_at
@@ -216,6 +221,7 @@ class Monitor:
     async def _run(self) -> None:
         try:
             while self.enabled:
+                capture_failure = False
                 try:
                     self.state = "reconnecting" if self.session else "checking"
                     room = await self.source.resolve(self.room_id)
@@ -244,7 +250,11 @@ class Monitor:
                     )
                     try:
                         await self.capture.run(room, self.writer, self._on_audio)
+                        capture_failure = True
                         raise SourceError("采集连接已关闭，重新检查直播状态。")
+                    except SourceError:
+                        capture_failure = True
+                        raise
                     finally:
                         self.writer.close()
                         self.writer = None
@@ -260,11 +270,18 @@ class Monitor:
                     )
                     self.state = "reconnecting"
                     if self.session:
-                        self.store.open_gap(
+                        gap_id = self.store.open_gap(
                             self.session["id"],
                             self.last_error,
                             self.store.last_segment_end(self.session["id"]),
                         )
+                        if capture_failure and gap_id is not None:
+                            self.transient_gap_id = gap_id
+                    unavailable_markers = ("无法查看", "不存在", "已被封禁", "已下架")
+                    if any(marker in self.last_error for marker in unavailable_markers):
+                        raise NeedsAttention(
+                            "连续 5 次无法解析直播间，请确认直播间 ID 是否存在或已被封禁。"
+                        ) from error
                     delays = self.settings.retry_delays
                     delay = delays[min(self.retry_index, len(delays) - 1)]
                     self.retry_index += 1

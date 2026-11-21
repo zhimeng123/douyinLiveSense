@@ -294,13 +294,18 @@ class Storage:
         ).fetchone()
         return row[0] if row else None
 
-    def open_gap(self, session_id: str, detail: str, started_at: str | None = None) -> None:
-        if self.db.execute(
-            "SELECT 1 FROM events WHERE session_id=? AND kind='gap' AND ended_at IS NULL",
+    def open_gap(self, session_id: str, detail: str, started_at: str | None = None) -> int | None:
+        existing = self.db.execute(
+            "SELECT id FROM events WHERE session_id=? AND kind='gap' AND ended_at IS NULL",
             (session_id,),
-        ).fetchone():
-            return
-        self.event(session_id, "gap", detail, started_at=started_at)
+        ).fetchone()
+        if existing:
+            return None
+        return self.event(session_id, "gap", detail, started_at=started_at)
+
+    def delete_event(self, event_id: int) -> None:
+        with self.db:
+            self.db.execute("DELETE FROM events WHERE id=?", (event_id,))
 
     def close_gap(self, session_id: str, ended_at: str) -> None:
         with self.db:
@@ -312,12 +317,13 @@ class Storage:
 
     def event(
         self, session_id: str | None, kind: str, detail: str, started_at: str | None = None
-    ) -> None:
+    ) -> int:
         with self.db:
-            self.db.execute(
+            cursor = self.db.execute(
                 "INSERT INTO events(session_id,kind,started_at,detail) VALUES (?,?,?,?)",
                 (session_id, kind, started_at or utc_now(), detail),
             )
+        return cursor.lastrowid
 
     def events(self, session_id: str) -> list[dict]:
         return [

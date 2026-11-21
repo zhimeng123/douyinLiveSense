@@ -20,7 +20,7 @@
       <strong class="drawer-heading">菜单</strong>
       <a href="#/home" id="nav-home">ValuSense</a>
       <a href="#/queue" id="nav-queue">分析队列 <span id="queue-badge">0</span></a>
-      <a href="#/models" id="nav-models">模型配置</a>
+      <a href="#/settings" id="nav-settings">网站配置</a>
       <button id="logout" class="drawer-action" type="button">退出登录</button>
     </nav>
     <header class="topbar">
@@ -174,24 +174,36 @@
           <button id="queue-next" class="text-button" disabled>下一页记录</button>
         </div>
       </section>
-      <section id="models-view" hidden aria-labelledby="models-heading">
+      <section id="settings-view" hidden aria-labelledby="settings-heading">
         <div class="intro">
-          <div class="eyebrow">MODEL SETUP</div>
-          <h1 id="models-heading">模型配置</h1>
-          <p>配置语音识别模型并查看下载进度。</p>
+          <div class="eyebrow">SITE SETUP</div>
+          <h1 id="settings-heading">网站配置</h1>
+          <p>选择识别方式，按需下载模型，并设定录音切片时长。</p>
         </div>
         <section id="models-card" class="models-card" aria-labelledby="models-card-heading">
           <div class="card-heading">
             <div>
-              <h2 id="models-card-heading">语音识别</h2>
-              <p class="subtle">关闭时只录音，不下载模型</p>
+              <h2 id="models-card-heading">识别方式配置</h2>
+              <p class="subtle">三种方式互斥；任务进行中无法更改</p>
             </div>
-            <label class="models-toggle" for="models-switch">
-              <input id="models-switch" type="checkbox" /> 完整识别
-            </label>
+            <span id="mode-lock" class="subtle" hidden>任务进行中</span>
           </div>
           <p id="models-unsupported" class="notice" role="status" hidden>Linux ARM64 仅支持录音</p>
           <div class="models-content">
+            <div class="mode-options" role="radiogroup" aria-labelledby="models-card-heading">
+              <label class="mode-option" for="mode-record">
+                <input id="mode-record" type="radio" name="recognition-mode" value="record" />
+                <span><strong>仅录音</strong><small>只保存音频，不做识别</small></span>
+              </label>
+              <label class="mode-option" for="mode-models">
+                <input id="mode-models" type="radio" name="recognition-mode" value="models" />
+                <span><strong>下载模型识别</strong><small>本地转写 + 人物判断</small></span>
+              </label>
+              <label class="mode-option" for="mode-feishu">
+                <input id="mode-feishu" type="radio" name="recognition-mode" value="feishu" disabled />
+                <span><strong>飞书秒记 <em>即将支持</em></strong><small>识别后同步到飞书</small></span>
+              </label>
+            </div>
             <p id="models-state" class="models-mode" aria-live="polite">正在检查识别配置</p>
             <div class="models-token-row">
               <label for="models-token">Hugging Face Token</label>
@@ -213,6 +225,29 @@
               <span id="models-progress-text">等待下载</span>
             </div>
             <p id="models-error" class="notice" role="alert" hidden></p>
+          </div>
+        </section>
+        <section id="duration-card" class="models-card" aria-labelledby="duration-heading">
+          <div class="card-heading">
+            <div>
+              <h2 id="duration-heading">录音时间配置</h2>
+              <p class="subtle">修改后从下一段切片开始生效，录音不中断</p>
+            </div>
+          </div>
+          <div class="models-content">
+            <div class="models-token-row">
+              <label for="segment-seconds">切片时长</label>
+              <input id="segment-seconds" type="number" min="1" max="14400" step="1"
+                inputmode="numeric" value="30" />
+              <select id="segment-unit">
+                <option value="seconds">秒</option>
+                <option value="minutes">分钟</option>
+              </select>
+              <button id="segment-save" type="button" class="secondary">保存</button>
+              <span id="segment-current" class="subtle">当前 30 秒</span>
+            </div>
+            <p class="subtle">范围 1 秒 – 14400 秒（4 小时）。时长很短会产生很多小文件。</p>
+            <p id="segment-error" class="notice" role="alert" hidden></p>
           </div>
         </section>
       </section>

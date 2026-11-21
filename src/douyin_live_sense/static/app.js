@@ -18,6 +18,7 @@ const state = {
   localBusy: false, localSessionId: null, localReportId: null,
   localSocket: null, localStream: null, localContext: null, localReport: null,
   models: null, modelJob: null, modelPoll: null, recognition: false, recognitionPending: false,
+  mode: "record", segmentSeconds: 30, settingsLocked: false,
 };
 const timeFormat = new Intl.DateTimeFormat("zh-CN", {
   timeZone: "Asia/Shanghai", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
@@ -71,18 +72,43 @@ function formatBytes(value) {
   const index = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1);
   return `${(value / (1024 ** index)).toFixed(index >= 3 ? 1 : 0)} ${units[index]}`;
 }
-function renderModels() {
+let segmentUnit = "seconds";
+function setSegmentNotice(message) {
+  const element = $("segment-error");
+  element.textContent = message || "";
+  element.hidden = !message;
+}
+function updateSegmentLimits() {
+  const input = $("segment-seconds");
+  if (segmentUnit === "minutes") {
+    input.min = "1";
+    input.max = "240";
+    input.step = "1";
+  } else {
+    input.min = "1";
+    input.max = "14400";
+    input.step = "1";
+  }
+}
+function renderSettings() {
   const models = state.models;
   if (!models) return;
   const job = state.modelJob;
   const running = job?.state === "running";
   const unsupported = !models.supported;
   $("models-unsupported").hidden = !unsupported;
-  $("models-switch").disabled = unsupported || running;
-  $("models-switch").checked = state.recognition;
-  $("models-state").textContent = state.recognition
-    ? "完整识别已开启"
-    : state.recognitionPending ? "正在准备模型，完成后启用完整识别" : "仅录音模式";
+  $("mode-lock").hidden = !state.settingsLocked;
+  for (const value of ["record", "models", "feishu"]) {
+    const radio = $(`mode-${value}`);
+    radio.checked = state.mode === value;
+    radio.disabled = state.settingsLocked || value === "feishu"
+      || (value !== "record" && unsupported);
+  }
+  $("models-state").textContent = state.mode === "models"
+    ? "下载模型识别已开启"
+    : state.mode === "feishu"
+      ? "飞书秒记尚未支持"
+      : state.recognitionPending ? "正在准备模型，完成后启用识别" : "仅录音模式";
   $("models-token").disabled = unsupported || running;
   $("models-token-save").disabled = unsupported || running;
   $("models-token-clear").disabled = unsupported || running || !models.token?.configured;
@@ -96,7 +122,7 @@ function renderModels() {
   if (!models.components?.transcription?.ready) missing.push("transcription");
   if (!models.components?.diarization?.ready) missing.push("diarization");
   $("models-download").hidden = unsupported || missing.length === 0;
-  $("models-download").disabled = running || !missing.length;
+  $("models-download").disabled = running || !missing.length || state.settingsLocked;
   $("models-download").textContent = running ? "模型下载中…" : "下载缺失模型";
   $("models-progress").hidden = !job || !["running", "completed", "failed"].includes(job.state);
   if (job) {
@@ -104,13 +130,23 @@ function renderModels() {
     $("models-progress-bar").value = percent;
     $("models-progress-text").textContent = `${job.state === "running" ? `已下载 ${percent.toFixed(0)}%` : job.state === "completed" ? "下载完成" : "下载失败"} · ${formatBytes(job.downloaded_bytes)} / ${formatBytes(job.total_bytes)}`;
   }
+  if (document.activeElement !== $("segment-seconds")) {
+    $("segment-seconds").value = segmentUnit === "minutes"
+      ? String(Math.round(state.segmentSeconds / 6) / 10)
+      : String(Math.round(state.segmentSeconds));
+  }
+  $("segment-current").textContent = `当前 ${secondsLabel(state.segmentSeconds)} 秒`;
+  updateSegmentLimits();
 }
 async function loadModels() {
   const [models, preferences] = await Promise.all([api("/api/models"), api("/api/preferences")]);
   state.models = models;
   state.modelJob = models.job;
+  state.mode = preferences.mode;
   state.recognition = preferences.recognition;
-  renderModels();
+  state.segmentSeconds = preferences.segment_seconds;
+  state.settingsLocked = preferences.locked;
+  renderSettings();
   syncAnalysisControls();
   updateModelPolling();
 }
@@ -142,13 +178,13 @@ async function pollModelJob() {
     state.recognitionPending = false;
     await loadModels();
     if (!completed) showModelError(error || "模型下载失败。");
-    else if (pending) await enableRecognitionIfReady();
-  } else renderModels();
+    else if (pending) await applyMode("models");
+  } else renderSettings();
   updateModelPolling();
 }
 async function beginModelDownload(parts, pendingEnable = false) {
   if (!parts.length) {
-    if (pendingEnable) await enableRecognitionIfReady();
+    if (pendingEnable) await applyMode("models");
     return;
   }
   state.recognitionPending = pendingEnable;
@@ -164,37 +200,33 @@ async function beginModelDownload(parts, pendingEnable = false) {
     showModelError(error.message);
   }
 }
-async function enableRecognitionIfReady() {
+async function applyMode(mode) {
   try {
-    await api("/api/preferences", {
+    const result = await api("/api/preferences", {
       method: "PUT", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ recognition: true }),
+      body: JSON.stringify({ mode }),
     });
-    state.recognition = true;
-    renderModels();
-    syncAnalysisControls();
+    state.mode = result.mode;
+    state.recognition = result.recognition;
+    state.settingsLocked = result.locked;
     showModelError("");
     await refresh(true);
   } catch (error) {
-    state.recognition = false;
-    renderModels();
-    syncAnalysisControls();
     showModelError(error.message);
+    await loadModels().catch(() => {});
   }
+  renderSettings();
+  syncAnalysisControls();
 }
-async function requestRecognition(enabled) {
-  if (!enabled) {
+async function requestMode(mode) {
+  if (mode === "feishu") {
+    showModelError("飞书秒记尚未支持。");
+    return;
+  }
+  if (mode === state.mode) return;
+  if (mode === "record") {
     state.recognitionPending = false;
-    try {
-      await api("/api/preferences", {
-        method: "PUT", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ recognition: false }),
-      });
-      state.recognition = false;
-      showModelError("");
-    } catch (error) { showModelError(error.message); }
-    renderModels();
-    syncAnalysisControls();
+    await applyMode("record");
     return;
   }
   const missing = [];
@@ -208,7 +240,29 @@ async function requestRecognition(enabled) {
     await beginModelDownload(missing, true);
     return;
   }
-  await enableRecognitionIfReady();
+  await applyMode("models");
+}
+async function saveSegmentSeconds() {
+  const value = Number($("segment-seconds").value);
+  if (!Number.isFinite(value) || value <= 0) {
+    setSegmentNotice("请输入大于 0 的切片时长。");
+    return;
+  }
+  const seconds = segmentUnit === "minutes" ? value * 60 : value;
+  if (!Number.isInteger(seconds) || seconds < 1 || seconds > 14400) {
+    setSegmentNotice("切片时长必须在 1 秒到 14400 秒之间，且为整数秒。");
+    return;
+  }
+  try {
+    const result = await api("/api/preferences", {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ segment_seconds: seconds }),
+    });
+    state.segmentSeconds = result.segment_seconds;
+    setSegmentNotice("");
+    renderSettings();
+    await refresh(true);
+  } catch (error) { setSegmentNotice(error.message); }
 }
 function node(tag, text, className) {
   const element = document.createElement(tag);
@@ -767,11 +821,25 @@ async function jumpTo(task) {
   else view.root.scrollIntoView({ block: "start" });
 }
 function routeViewState(hash) {
-  const route = hash === "#/queue" ? "queue" : hash === "#/models" ? "models" : "home";
+  const route = hash === "#/queue"
+    ? "queue"
+    : hash === "#/settings" || hash === "#/models"
+      ? "settings"
+      : hash === "#/password"
+        ? "password"
+        : "home";
   return {
     route,
-    views: { home: route !== "home", queue: route !== "queue", models: route !== "models" },
-    nav: { home: route === "home" ? "page" : "false", queue: route === "queue" ? "page" : "false", models: route === "models" ? "page" : "false" },
+    views: {
+      home: route !== "home", queue: route !== "queue", settings: route !== "settings",
+      password: route !== "password",
+    },
+    nav: {
+      home: route === "home" ? "page" : "false",
+      queue: route === "queue" ? "page" : "false",
+      settings: route === "settings" ? "page" : "false",
+      password: route === "password" ? "page" : "false",
+    },
   };
 }
 function route() {
@@ -780,10 +848,11 @@ function route() {
   state.route = routed.route;
   $("home-view").hidden = routed.views.home;
   $("queue-view").hidden = routed.views.queue;
-  $("models-view").hidden = routed.views.models;
+  $("settings-view").hidden = routed.views.settings;
   $("nav-home").setAttribute("aria-current", routed.nav.home);
   $("nav-queue").setAttribute("aria-current", routed.nav.queue);
-  $("nav-models").setAttribute("aria-current", routed.nav.models);
+  $("nav-settings").setAttribute("aria-current", routed.nav.settings);
+  if (routed.route === "settings") loadModels().catch((error) => showModelError(error.message));
   loadQueue().catch((error) => notice(error.message));
 }
 function workletUrl() {
@@ -997,22 +1066,23 @@ $("models-token-save").onclick = async () => {
     });
     $("models-token").value = "";
     state.models = { ...state.models, token: result.token };
-    renderModels();
+    renderSettings();
     showModelError(result.warning || "Token 已保存。");
   } catch (error) { showModelError(error.message); }
 };
 $("models-token-clear").onclick = async () => {
   try {
     await api("/api/models/token", { method: "DELETE" });
-    if (state.recognition) {
-      await api("/api/preferences", {
+    if (state.mode !== "record") {
+      const result = await api("/api/preferences", {
         method: "PUT", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ recognition: false }),
+        body: JSON.stringify({ mode: "record" }),
       });
-      state.recognition = false;
+      state.mode = result.mode;
+      state.recognition = result.recognition;
     }
     state.models = { ...state.models, token: { configured: false, masked: "", source: "none" } };
-    renderModels();
+    renderSettings();
     syncAnalysisControls();
     showModelError("Token 已清除。");
   } catch (error) { showModelError(error.message); }
@@ -1023,11 +1093,26 @@ $("models-download").onclick = async () => {
   if (!state.models?.components?.diarization?.ready) parts.push("diarization");
   await beginModelDownload(parts);
 };
-$("models-switch").onchange = async () => {
-  const enabled = $("models-switch").checked;
-  $("models-switch").disabled = true;
-  await requestRecognition(enabled);
-  $("models-switch").disabled = false;
+for (const mode of ["record", "models"]) {
+  $(`mode-${mode}`).onchange = () => {
+    if (!$(`mode-${mode}`).checked) return;
+    requestMode(mode).catch((error) => showModelError(error.message));
+  };
+}
+$("segment-save").onclick = () => {
+  saveSegmentSeconds().catch((error) => setSegmentNotice(error.message));
+};
+$("segment-unit").onchange = () => {
+  const next = $("segment-unit").value;
+  const value = Number($("segment-seconds").value);
+  if (Number.isFinite(value)) {
+    const seconds = segmentUnit === "minutes" ? value * 60 : value;
+    $("segment-seconds").value = next === "minutes"
+      ? String(Math.round(seconds / 6) / 10)
+      : String(Math.round(seconds));
+  }
+  segmentUnit = next;
+  updateSegmentLimits();
 };
 async function refresh(force = false) {
   if (state.refreshRunning) return;
@@ -1037,6 +1122,10 @@ async function refresh(force = false) {
     state.connected = true;
     renderMonitor(monitor);
     updateLocal();
+    if (state.settingsLocked !== !!monitor.enabled) {
+      state.settingsLocked = !!monitor.enabled;
+      renderSettings();
+    }
     $("analysis-global").textContent = state.recognition && global.models.ready ? (global.worker_state === "processing" ? "模型正在分析音频" : "模型已就绪") : "仅录音模式";
     $("model-hint").textContent = global.last_error || global.models.reason || "本地运行：Community-1 人物判断 + Paraformer 普通话转写。分段分析会有处理延迟。";
     if (force || state.tick++ % 5 === 0) await loadSessions();
@@ -1115,7 +1204,7 @@ function setMenuOpen(open) {
 }
 $("menu-toggle").onclick = () => setMenuOpen($("menu-toggle").getAttribute("aria-expanded") !== "true");
 $("menu-backdrop").onclick = () => setMenuOpen(false);
-for (const id of ["nav-home", "nav-queue", "nav-models"]) $(id).onclick = () => setMenuOpen(false);
+for (const id of ["nav-home", "nav-queue", "nav-settings"]) $(id).onclick = () => setMenuOpen(false);
 $("logout").onclick = async () => {
   try { await api("/api/logout", { method: "POST" }); }
   finally { location.assign("/login"); }
@@ -1126,7 +1215,7 @@ document.addEventListener("keydown", (event) => {
     event.preventDefault();
     setMenuOpen(false);
   } else if (event.key === "Tab") {
-    const controls = [$("menu-toggle"), $("nav-home"), $("nav-queue"), $("nav-models"), $("logout")];
+    const controls = [$("menu-toggle"), $("nav-home"), $("nav-queue"), $("nav-settings"), $("logout")];
     const next = (controls.indexOf(document.activeElement) + (event.shiftKey ? -1 : 1) + controls.length) % controls.length;
     event.preventDefault();
     controls[next].focus();

@@ -26,7 +26,6 @@ def test_index_has_model_setup_controls():
     html = (STATIC / "index.html").read_text()
     for element in [
         "models-card",
-        "models-switch",
         "models-token",
         "models-progress",
         "models-transcription",
@@ -35,12 +34,32 @@ def test_index_has_model_setup_controls():
         assert f'id="{element}"' in html
 
 
+def test_settings_view_hosts_recognition_modes_and_duration():
+    html = (STATIC / "index.html").read_text()
+    parser = _IdParentParser()
+    parser.feed(html)
+    for element in (
+        "mode-record",
+        "mode-models",
+        "mode-feishu",
+        "segment-seconds",
+        "segment-unit",
+        "segment-save",
+        "segment-current",
+    ):
+        assert f'id="{element}"' in html
+    assert parser.parents["models-card"] == "settings-view"
+    assert "segment-seconds" in parser.descendants["settings-view"]
+    assert "models-switch" not in html
+    assert "网站配置" in html
+
+
 def test_index_places_model_setup_in_menu_view():
     html = (STATIC / "index.html").read_text()
     parser = _IdParentParser()
     parser.feed(html)
-    assert parser.parents["nav-models"] == "site-menu"
-    assert parser.parents["models-card"] == "models-view"
+    assert parser.parents["nav-settings"] == "site-menu"
+    assert parser.parents["models-card"] == "settings-view"
     assert "models-card" not in parser.descendants["home-view"]
 
 
@@ -57,7 +76,7 @@ def test_home_merges_capture_modes_into_tabs():
     assert "aria-selected" in js
 
 
-def test_app_routes_model_settings_view():
+def test_app_routes_settings_and_legacy_models_hash():
     js = (STATIC / "app.js").read_text()
     assert "function routeViewState" in js
     start = js.index("function routeViewState")
@@ -65,7 +84,7 @@ def test_app_routes_model_settings_view():
     route_source = js[start:end]
     script = f"""
 {route_source}
-const hashes = ["#/home", "#/queue", "#/models", "", "#/unknown"];
+const hashes = ["#/home", "#/queue", "#/settings", "#/models", "#/password", "", "#/unknown"];
 const result = hashes.map((hash) => routeViewState(hash));
 process.stdout.write(JSON.stringify(result));
 """
@@ -75,14 +94,18 @@ process.stdout.write(JSON.stringify(result));
     expected = [
         ("home", "home"),
         ("queue", "queue"),
-        ("models", "models"),
+        ("settings", "settings"),
+        ("settings", "settings"),
+        ("password", "password"),
         ("home", "home"),
         ("home", "home"),
     ]
     for state, (route, current) in zip(states, expected, strict=True):
         assert state["route"] == route
         assert [name for name, hidden in state["views"].items() if not hidden] == [route]
-        assert [name for name, value in state["nav"].items() if value == "page"] == [current]
+        if current != "password":
+            assert [name for name, value in state["nav"].items() if value == "page"] == [current]
+        assert "password" in state["views"]
 
 
 class _IdParentParser(HTMLParser):

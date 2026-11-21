@@ -58,7 +58,7 @@ https://live.douyin.com/?live_web_rid=123456789
 登录后打开菜单里的“网站配置 → 识别方式配置”，在三种互斥方式中选择：
 
 - **仅录音**（默认）：只保存音频，不分析。
-- **下载模型识别**：本地转写与人物判断。需要先输入 Hugging Face 只读 Token，在 [Community-1 模型页面](https://huggingface.co/pyannote/speaker-diarization-community-1) 接受条款，再点击下载缺失模型。
+- **纯本地模型识别**：本地转写与人物判断。需要先输入 Hugging Face 只读 Token，在 [Community-1 模型页面](https://huggingface.co/pyannote/speaker-diarization-community-1) 接受条款，再点击下载缺失模型。
 - **飞书秒记**：尚未支持，选项暂不可选。
 
 任务进行中（直播间守卫或本机录音）无法更改识别方式，需先停止任务。Token 只保存到服务端 `data/models/hf_token`，API 和日志不会返回明文。
@@ -139,7 +139,7 @@ uv run --locked --env-file .env douyin-live-sense
 
 ## 分析使用方式
 
-默认是仅录音。只有识别方式为“下载模型识别”且模型就绪后，实时分析、整场分析和单片复核按钮才会启用。
+默认是仅录音。只有识别方式为“纯本地模型识别”且模型就绪后，实时分析、整场分析和单片复核按钮才会启用。
 
 ### 手动分析整场
 

@@ -71,7 +71,7 @@
           </div>
           <label class="analysis-switch" for="realtime">
             <input id="realtime" type="checkbox" /> 实时生成普通话记录
-            <small>默认手动；中途开启会先补分析本场次之前保存的音频。</small>
+            <small>勾选后开启守卫时即实时分析；中途开启会先补分析本场次之前保存的音频。</small>
           </label>
         </form>
         <div id="notice" class="notice" role="alert" hidden></div>
@@ -198,7 +198,7 @@
               </label>
               <label class="mode-option" for="mode-models">
                 <input id="mode-models" type="radio" name="recognition-mode" value="models" />
-                <span><strong>下载模型识别</strong><small>本地转写 + 人物判断</small></span>
+                <span><strong>纯本地模型识别</strong><small>本地转写 + 人物判断</small></span>
               </label>
               <label class="mode-option" for="mode-feishu">
                 <input id="mode-feishu" type="radio" name="recognition-mode" value="feishu" disabled />

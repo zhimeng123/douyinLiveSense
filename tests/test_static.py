@@ -245,6 +245,83 @@ process.stdout.write(JSON.stringify(seen));
 """
 
 
+CONTROLS_HARNESS_HEAD = """
+const registry = {};
+function $(id) {
+  return (registry[id] ||= {
+    textContent: "", className: "", hidden: false, disabled: false, checked: false,
+    value: "", title: "", children: [],
+    replaceChildren(...items) { this.children = items; },
+    insertBefore() {}, remove() {},
+    setAttribute(name, value) { this[name] = value; },
+  });
+}
+const state = {
+  recognition: true, busy: false, analysisBusy: false, monitorEnabled: false,
+  localBusy: false, localSocket: null, monitor: { session_id: null }, sessions: new Map(),
+};
+"""
+
+
+def test_realtime_toggle_is_available_before_starting_the_guard(tmp_path):
+    """识别方式已选“纯本地模型识别”且模型就绪时，未开守卫也应能先勾选实时生成。"""
+    js = (STATIC / "app.js").read_text()
+    sync_src = js[js.index("function syncAnalysisControls"):js.index("function updateModelPolling")]
+    script = f"""
+{CONTROLS_HARNESS_HEAD}
+function updateClip() {{}}
+{sync_src}
+const seen = {{}};
+syncAnalysisControls();
+seen.readyIdle = !$("realtime").disabled;
+state.recognition = false;
+syncAnalysisControls();
+seen.recordOnly = $("realtime").disabled;
+state.recognition = true;
+state.busy = true;
+syncAnalysisControls();
+seen.busy = $("realtime").disabled;
+state.busy = false;
+state.monitor = {{ session_id: null, mode: "local" }};
+syncAnalysisControls();
+seen.localRecording = $("realtime").disabled;
+process.stdout.write(JSON.stringify(seen));
+"""
+    script_path = tmp_path / "controls-harness.cjs"
+    script_path.write_text(script)
+    completed = subprocess.run(
+        ["node", str(script_path)], capture_output=True, text=True, check=False
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) == {
+        "readyIdle": True,
+        "recordOnly": True,
+        "busy": True,
+        "localRecording": True,
+    }
+
+
+def test_realtime_label_explains_pre_start_selection():
+    html = (STATIC / "index.html").read_text()
+    label = html[html.index('for="realtime"'):]
+    label = label[:label.index("</label>")]
+    assert "开启守卫时" in label
+
+
+def test_models_mode_is_called_local_model_recognition():
+    sources = {
+        "index.html": STATIC / "index.html",
+        "app.js": STATIC / "app.js",
+        "app.py": STATIC.parent / "app.py",
+        "README.md": STATIC.parents[2] / "README.md",
+    }
+    for name, path in sources.items():
+        text = path.read_text()
+        assert "下载模型识别" not in text, name
+    for name in ("index.html", "app.js", "README.md"):
+        assert "纯本地模型识别" in sources[name].read_text(), name
+
+
 def test_capture_badge_follows_monitor_state(tmp_path):
     js = (STATIC / "app.js").read_text()
     labels_src = js[js.index("const labels ="):js.index("const analysisLabels")]

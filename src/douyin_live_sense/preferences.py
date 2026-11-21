@@ -30,7 +30,7 @@ class Preferences:
             return {}
         version = data.get("version")
         if not isinstance(version, int) or isinstance(version, bool) or version < 2:
-            # v1 只有 recognition：开启即“下载模型识别”。
+            # v1 只有 recognition：开启即“纯本地模型识别”。
             return {"mode": "models" if data.get("recognition") is True else "record"}
         return data
 

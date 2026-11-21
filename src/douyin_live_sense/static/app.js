@@ -110,7 +110,7 @@ function renderSettings() {
       || (value !== "record" && unsupported);
   }
   $("models-state").textContent = state.mode === "models"
-    ? "下载模型识别已开启"
+    ? "纯本地模型识别已开启"
     : state.mode === "feishu"
       ? "飞书秒记尚未支持"
       : state.recognitionPending ? "正在准备模型，完成后启用识别" : "仅录音模式";
@@ -156,7 +156,10 @@ async function loadModels() {
   updateModelPolling();
 }
 function syncAnalysisControls() {
-  $("realtime").disabled = !state.recognition || state.busy || state.analysisBusy || !state.monitorEnabled;
+  // 实时生成既是“开守卫时”的选项，也是运行中的开关，未开守卫时也应可勾选。
+  // 本机录音进行中不能开守卫，因此仍然禁用。
+  const localRunning = state.monitor?.mode === "local";
+  $("realtime").disabled = !state.recognition || state.busy || state.analysisBusy || localRunning;
   $("local-realtime").disabled = !state.recognition || state.localBusy || !!state.localSocket;
   $("analyse-current").disabled = !state.recognition || state.analysisBusy || !state.monitor?.session_id;
   for (const view of state.sessions.values()) {
@@ -368,7 +371,6 @@ function renderMonitor(data) {
   }
   if (data.enabled) $("realtime").checked = data.realtime_analysis;
   else if (wasEnabled) $("realtime").checked = false;
-  $("realtime").disabled = state.busy || state.analysisBusy;
   $("connection-dot").className = `connection-dot ${data.state}`;
 
   $("anchor").textContent = data.anchor_name || (data.enabled ? "正在获取直播间信息" : "准备开始监听");
@@ -625,7 +627,7 @@ async function post(path, body) {
 }
 async function requestSession(id, retry = false) {
   if (!state.recognition) {
-    showModelError("当前为仅录音模式，请先在“网站配置 → 识别方式配置”选择“下载模型识别”。");
+    showModelError("当前为仅录音模式，请先在“网站配置 → 识别方式配置”选择“纯本地模型识别”。");
     return;
   }
   let view = state.sessions.get(id);
@@ -678,7 +680,7 @@ async function requestSession(id, retry = false) {
 }
 async function requestClip(clip, reanalyse = false, retry = false) {
   if (!state.recognition) {
-    showModelError("当前为仅录音模式，请先在“网站配置 → 识别方式配置”选择“下载模型识别”。");
+    showModelError("当前为仅录音模式，请先在“网站配置 → 识别方式配置”选择“纯本地模型识别”。");
     return;
   }
   clip.busy = true;
@@ -1186,6 +1188,7 @@ $("analyse-current").onclick = async () => {
   finally { state.analysisBusy = false; await refresh(); }
 };
 $("realtime").onchange = async () => {
+  // 守卫未运行时只是记下选择，会在点击“开启守卫”时随请求提交。
   if (!state.monitorEnabled) return;
   state.analysisBusy = true;
   $("realtime").disabled = true;

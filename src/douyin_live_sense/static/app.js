@@ -13,6 +13,7 @@ const state = {
   refreshRunning: false, tick: 0, actionError: null, monitor: null,
   monitorEnabled: false, analysisBusy: false, sessions: new Map(),
   visibleSessions: new Set(), pinnedSession: null, route: "home",
+  homeTab: "douyin", lastMode: undefined,
   queueRequests: new Map(), queueLoading: false,
   localBusy: false, localSessionId: null, localReportId: null,
   localSocket: null, localStream: null, localContext: null, localReport: null,
@@ -246,13 +247,49 @@ function play(path, label) {
   $("player").src = path;
   $("player").play().catch((error) => notice(error.message));
 }
+function secondsLabel(value) {
+  const number = Number(value) || 0;
+  return Number.isInteger(number) ? String(number) : number.toFixed(1);
+}
+function setHomeTab(tab) {
+  state.homeTab = tab;
+  for (const name of ["douyin", "local"]) {
+    const active = name === tab;
+    const button = $(`tab-${name}`);
+    button.setAttribute("aria-selected", String(active));
+    button.tabIndex = active ? 0 : -1;
+    $(`panel-${name}`).hidden = !active;
+  }
+  updateBadge();
+}
+function updateBadge() {
+  const data = state.monitor || {};
+  let text;
+  let kind;
+  if (data.mode === "local") {
+    text = labels[data.state] || "正在录音";
+    kind = data.state;
+  } else if (state.homeTab === "local") {
+    text = "未录音";
+    kind = "stopped";
+  } else {
+    text = labels[data.state] || data.state || "正在连接服务";
+    kind = data.state || "stopped";
+  }
+  $("state").textContent = text;
+  $("state").className = `badge ${kind}`;
+}
 function renderMonitor(data) {
   const wasEnabled = state.monitorEnabled;
   state.monitor = data;
   state.monitorEnabled = data.enabled && data.mode !== "local";
+  if (state.lastMode !== data.mode) {
+    state.lastMode = data.mode;
+    if (data.mode === "local") setHomeTab("local");
+    else if (data.enabled) setHomeTab("douyin");
+  }
+  $("segment-rule").textContent = `按采样保存 ${secondsLabel(data.segment_seconds)} 秒 WAV · 停止或断线保留尾段`;
   if (data.mode === "local") {
-    $("state").textContent = "本机录音进行中";
-    $("state").className = "badge waiting";
     $("connection-dot").className = "connection-dot waiting";
     $("anchor").textContent = "本机录音进行中";
     $("live-title").textContent = "请在本机录音卡片停止后，再开启直播间守卫。";
@@ -261,15 +298,15 @@ function renderMonitor(data) {
     $("room").disabled = true;
     $("realtime").disabled = true;
     $("analyse-current").disabled = state.analysisBusy || !data.session_id;
+    updateBadge();
     notice(data.last_error || state.actionError);
     return;
   }
   if (data.enabled) $("realtime").checked = data.realtime_analysis;
   else if (wasEnabled) $("realtime").checked = false;
   $("realtime").disabled = state.busy || state.analysisBusy;
-  $("state").textContent = labels[data.state] || data.state;
-  $("state").className = `badge ${data.state}`;
   $("connection-dot").className = `connection-dot ${data.state}`;
+
   $("anchor").textContent = data.anchor_name || (data.enabled ? "正在获取直播间信息" : "准备开始监听");
   $("live-title").textContent = data.title || (data.state === "waiting" ? "直播间尚未开播，守卫会持续等待。" : "输入直播间，开启后可关闭此网页；本机服务需要保持运行。");
   $("duration").textContent = duration(data.captured_seconds);
@@ -921,8 +958,6 @@ function updateLocal() {
   $("local-source").disabled = state.localBusy || local || busyElsewhere;
   $("local-realtime").disabled = !state.recognition || state.localBusy || local || busyElsewhere;
   if (local) $("local-realtime").checked = data.realtime_analysis;
-  $("local-state").textContent = busyElsewhere ? "其他任务运行中" : labels[data.state] || "未录音";
-  $("local-state").className = `badge ${local ? data.state : "stopped"}`;
   $("local-title").textContent = local ? data.title || "本机录音" : "未开始";
   $("local-status-text").textContent = local
     ? (data.last_audio_at ? `正在采集 · 最近到达 ${clock(data.last_audio_at)}` : "正在等待音频…")
@@ -940,6 +975,15 @@ $("local-toggle").onclick = () => {
   const local = state.monitor && state.monitor.mode === "local";
   return (local ? stopLocal() : startLocal()).catch((error) => localNotice(error.message));
 };
+for (const name of ["douyin", "local"]) {
+  $(`tab-${name}`).onclick = () => setHomeTab(name);
+  $(`tab-${name}`).onkeydown = (event) => {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    setHomeTab(name === "douyin" ? "local" : "douyin");
+    $(`tab-${state.homeTab}`).focus();
+  };
+}
 $("models-token-save").onclick = async () => {
   const token = $("models-token").value.trim();
   if (!token) {

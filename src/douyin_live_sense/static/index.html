@@ -40,11 +40,17 @@
           持续守卫一个直播间，自动等待开播与恢复连接，将音频按场次保存在本机。
         </p>
       </section>
-      <section class="monitor-card" aria-labelledby="monitor-heading">
-        <div class="card-heading">
-          <h2 id="monitor-heading">直播间守卫</h2>
+      <section class="monitor-card" aria-label="音频采集">
+        <div class="card-heading card-heading-tabs">
+          <div class="mode-tabs" role="tablist" aria-label="采集方式">
+            <button id="tab-douyin" class="mode-tab" type="button" role="tab"
+              aria-selected="true" aria-controls="panel-douyin">直播间守卫</button>
+            <button id="tab-local" class="mode-tab" type="button" role="tab"
+              aria-selected="false" aria-controls="panel-local" tabindex="-1">本机录音</button>
+          </div>
           <span id="state" class="badge" aria-live="polite">正在连接服务</span>
         </div>
+        <div id="panel-douyin" class="mode-panel" role="tabpanel" aria-labelledby="tab-douyin">
         <form id="monitor-form">
           <label for="room">直播间 ID 或链接</label>
           <div class="input-row">
@@ -92,15 +98,11 @@
           </div>
         </div>
         <div class="card-foot">
-          <span>按采样保存 30 秒 WAV · 停止或断线保留尾段</span
+          <span id="segment-rule">按采样保存 30 秒 WAV · 停止或断线保留尾段</span
           ><span id="save-path" title="音频保存目录"></span>
         </div>
-      </section>
-      <section class="monitor-card" aria-labelledby="local-heading">
-        <div class="card-heading">
-          <h2 id="local-heading">本机录音</h2>
-          <span id="local-state" class="badge" aria-live="polite">未录音</span>
         </div>
+        <div id="panel-local" class="mode-panel" role="tabpanel" aria-labelledby="tab-local" hidden>
         <form id="local-form">
           <label for="local-source">录音来源</label>
           <div class="input-row">
@@ -138,6 +140,7 @@
           <div id="local-downloads" class="transcript-downloads" hidden></div>
         </div>
         <div id="local-report" class="local-report"></div>
+        </div>
       </section>
       <section class="analysis-summary" aria-label="分析状态">
         <div class="transcript-heading"><h2>本地分析</h2>

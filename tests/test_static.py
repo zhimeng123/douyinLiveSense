@@ -44,6 +44,19 @@ def test_index_places_model_setup_in_menu_view():
     assert "models-card" not in parser.descendants["home-view"]
 
 
+def test_home_merges_capture_modes_into_tabs():
+    html = (STATIC / "index.html").read_text()
+    parser = _IdParentParser()
+    parser.feed(html)
+    for element in ("tab-douyin", "tab-local", "panel-douyin", "panel-local"):
+        assert f'id="{element}"' in html
+    assert parser.parents["panel-douyin"] == parser.parents["panel-local"]
+    assert "local-heading" not in parser.parents
+    js = (STATIC / "app.js").read_text()
+    assert "function setHomeTab" in js
+    assert "aria-selected" in js
+
+
 def test_app_routes_model_settings_view():
     js = (STATIC / "app.js").read_text()
     assert "function routeViewState" in js

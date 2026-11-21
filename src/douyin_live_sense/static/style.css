@@ -166,6 +166,38 @@ main {
   align-items: center;
   justify-content: space-between;
 }
+.card-heading-tabs {
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.mode-tabs {
+  display: flex;
+  gap: 6px;
+  padding: 4px;
+  background: #f2f5ef;
+  border-radius: 10px;
+}
+.mode-tab {
+  padding: 9px 18px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #61766d;
+  font-size: 14px;
+  font-weight: 600;
+}
+.mode-tab:hover {
+  color: var(--green);
+}
+.mode-tab[aria-selected="true"] {
+  background: #fff;
+  color: var(--green);
+  box-shadow: 0 1px 4px #28392a14;
+}
+.mode-tab:focus-visible {
+  outline: 2px solid #51816b;
+  outline-offset: 1px;
+}
 h2 {
   font-size: 19px;
   font-weight: 650;

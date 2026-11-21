@@ -221,9 +221,13 @@ async function applyMode(mode) {
 async function requestMode(mode) {
   if (mode === "feishu") {
     showModelError("飞书秒记尚未支持。");
+    renderSettings();
     return;
   }
-  if (mode === state.mode) return;
+  if (mode === state.mode) {
+    renderSettings();
+    return;
+  }
   if (mode === "record") {
     state.recognitionPending = false;
     await applyMode("record");
@@ -234,6 +238,7 @@ async function requestMode(mode) {
   if (!state.models?.components?.diarization?.ready) missing.push("diarization");
   if (missing.length && !state.models?.token?.configured) {
     showModelError("人物判断需要 Hugging Face Token，请先保存 Token 并接受 Community-1 条款。");
+    renderSettings();
     return;
   }
   if (missing.length) {

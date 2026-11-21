@@ -257,6 +257,17 @@ h3 {
 .badge.recording {
   color: #17634e;
   background: #e5f4eb;
+  animation: recording-breathe 2.6s ease-in-out infinite;
+}
+@keyframes recording-breathe {
+  0%, 100% {
+    background: #e5f4eb;
+    box-shadow: 0 0 0 0 #31826400;
+  }
+  50% {
+    background: #cdebd9;
+    box-shadow: 0 0 0 6px #3182641a;
+  }
 }
 .badge.waiting,
 .badge.checking,
@@ -648,6 +659,7 @@ footer {
   }
 }
 @media (prefers-reduced-motion: reduce) {
+  .badge.recording,
   .connection-dot.recording {
     animation: none;
   }

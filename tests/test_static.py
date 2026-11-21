@@ -474,6 +474,16 @@ def test_capture_badge_follows_monitor_state(tmp_path):
     }
 
 
+def test_capture_badge_breathes_only_while_recording_and_respects_reduced_motion():
+    css = (STATIC / "style.css").read_text()
+    recording_rule = css.split(".badge.recording {", 1)[1].split("}", 1)[0]
+    assert "animation: recording-breathe 2.6s ease-in-out infinite;" in recording_rule
+    assert "@keyframes recording-breathe" in css
+    reduced_motion = css.split("@media (prefers-reduced-motion: reduce) {", 1)[1].split("}", 1)[0]
+    assert ".badge.recording" in reduced_motion
+    assert "animation: none;" in reduced_motion
+
+
 def test_segment_seconds_helper_rounds_minutes_to_whole_seconds():
     js = (STATIC / "app.js").read_text()
     start = js.index("function segmentSecondsFrom")

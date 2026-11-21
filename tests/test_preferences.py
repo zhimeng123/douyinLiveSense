@@ -1,3 +1,6 @@
+import json
+
+import pytest
 from conftest import FakeCapture, FakeSource, login
 from fastapi.testclient import TestClient
 
@@ -8,14 +11,38 @@ from douyin_live_sense.preferences import Preferences
 from douyin_live_sense.storage import Storage
 
 
-def test_defaults_to_record_only(tmp_path):
-    assert Preferences(tmp_path / "preferences.json").enabled() is False
+def test_defaults_to_record_and_default_seconds(tmp_path):
+    prefs = Preferences(tmp_path / "preferences.json", default_segment_seconds=30)
+    assert prefs.mode() == "record"
+    assert prefs.segment_seconds() == 30
+    assert prefs.enabled() is False
 
 
-def test_toggle_persists(tmp_path):
+def test_legacy_v1_recognition_true_migrates_to_models(tmp_path):
+    path = tmp_path / "preferences.json"
+    path.write_text(json.dumps({"version": 1, "recognition": True}))
+    assert Preferences(path).mode() == "models"
+    assert Preferences(path).enabled() is True
+
+
+def test_update_persists_mode_and_seconds(tmp_path):
     prefs = Preferences(tmp_path / "preferences.json")
-    prefs.set_enabled(True)
-    assert Preferences(tmp_path / "preferences.json").enabled() is True
+    prefs.update(mode="models", segment_seconds=600)
+    reloaded = Preferences(tmp_path / "preferences.json")
+    assert reloaded.mode() == "models"
+    assert reloaded.segment_seconds() == 600
+    assert reloaded.snapshot() == {"mode": "models", "segment_seconds": 600}
+
+
+@pytest.mark.parametrize("seconds", [0, -1, 14_401])
+def test_update_rejects_seconds_out_of_range(tmp_path, seconds):
+    with pytest.raises(ValueError):
+        Preferences(tmp_path / "preferences.json").update(segment_seconds=seconds)
+
+
+def test_update_rejects_unknown_mode(tmp_path):
+    with pytest.raises(ValueError):
+        Preferences(tmp_path / "preferences.json").update(mode="auto")
 
 
 def test_api_refuses_enabling_without_models(settings, auth, monkeypatch):

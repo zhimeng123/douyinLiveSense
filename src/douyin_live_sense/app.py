@@ -1,13 +1,18 @@
 import asyncio
+import re
+import shutil
 import time
+import zipfile
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated
+from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from starlette.background import BackgroundTask
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .analysis import AnalysisService
@@ -700,6 +705,48 @@ def create_app(
         if not app.state.store.session(session_id):
             raise HTTPException(404, "场次不存在。")
         return app.state.store.events(session_id)
+
+    @app.get("/api/sessions/{session_id}/audio.zip")
+    async def download_session_audio(session_id: str):
+        store = app.state.store
+        session = store.session(session_id)
+        if not session:
+            raise HTTPException(404, "场次不存在。")
+        segments = store.segments(session_id, limit=1000)
+        if not segments:
+            raise HTTPException(404, "此场次尚无已保存完成的音频切片。")
+
+        tmp_dir = store.data_dir / "tmp"
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        zip_path = tmp_dir / f"session-{session_id}-{uuid4().hex}.zip"
+
+        def build_zip() -> None:
+            try:
+                with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_STORED) as archive:
+                    for segment in segments:
+                        path = store.segment_path(segment)
+                        with path.open("rb") as source_file, archive.open(path.name, "w") as target:
+                            shutil.copyfileobj(source_file, target, length=1024 * 1024)
+            except BaseException:
+                zip_path.unlink(missing_ok=True)
+                raise
+
+        try:
+            await asyncio.to_thread(build_zip)
+        except FileNotFoundError as error:
+            raise HTTPException(404, "音频文件已不存在。") from error
+        except Exception:
+            zip_path.unlink(missing_ok=True)
+            raise
+
+        anchor = re.sub(r'[\\/:*?"<>|\x00-\x1f\x7f-\x9f]', "", session["anchor_name"] or "")[:40]
+        filename = f"{anchor or '直播'}-{session['started_at'][:10]}.zip"
+        return FileResponse(
+            zip_path,
+            media_type="application/zip",
+            filename=filename,
+            background=BackgroundTask(zip_path.unlink, missing_ok=True),
+        )
 
     @app.get("/api/segments/{segment_id}/audio")
     async def get_audio(segment_id: str, download: bool = False):

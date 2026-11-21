@@ -521,8 +521,10 @@ function createSession(session) {
   view.generate = button("分析本场全部切片", () => requestSession(view.id), "secondary");
   view.retry = button("重试未完成分析", () => requestSession(view.id, true), "secondary");
   view.retry.hidden = true;
+  view.downloadZip = node("a", "下载整场音频（ZIP）", "text-button");
+  view.downloadZip.href = `/api/sessions/${view.id}/audio.zip`;
   const actions = node("div", undefined, "archive-actions");
-  actions.append(view.generate, view.retry);
+  actions.append(view.generate, view.retry, view.downloadZip);
   view.feedback = node("p", "", "analysis-feedback");
   view.feedback.setAttribute("role", "status");
   view.feedback.setAttribute("aria-live", "polite");
@@ -555,6 +557,7 @@ function updateSession(view, session) {
   view.heading.textContent = `${session.anchor_name || `直播间 ${session.room_id}`} · ${stamp(session.started_at)}`;
   view.description.textContent = `${session.ended_at ? "已结束" : "场次未结束"} · ${duration(session.duration_seconds)} · ${session.segment_count} 段`;
   view.info.textContent = `${session.title || "直播记录"} · 房间 ${session.room_id} · 场次 ${session.id}`;
+  view.downloadZip.hidden = !session.segment_count;
   if (!state.recognition) {
     view.generate.disabled = true;
     view.retry.disabled = true;
@@ -652,6 +655,7 @@ async function loadSession(view, around = null) {
     view.progress.textContent = `${analysisLabels[result.state]} · 已处理 ${duration(result.processed_seconds)} / 请求 ${duration(result.target_seconds)} · 待处理 ${duration(result.backlog_seconds)} · 尚未请求 ${duration(result.unrequested_seconds)}${result.pending_speech ? " · 等待跨段发言结束" : ""}`;
     view.error.textContent = result.last_error || result.export_error || "";
     view.hasReadyAudio = segments.length > 0 || view.data.segment_count > 0;
+    view.downloadZip.hidden = !view.hasReadyAudio;
     view.generate.disabled = !!view.busy || !view.hasReadyAudio;
     view.generate.textContent = view.busy ? "正在提交…" : "分析本场全部切片";
     view.retry.hidden = result.state !== "needs_attention";

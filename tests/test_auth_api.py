@@ -19,6 +19,15 @@ def test_unauthenticated_requests_are_blocked(build_app):
                 pass
 
 
+def test_unauthenticated_api_response_has_matching_content_length(build_app):
+    client = TestClient(build_app(), base_url="http://127.0.0.1")
+    with client:
+        response = client.get("/api/monitor")
+        assert response.status_code == 401
+        assert response.json() == {"detail": "请先登录。"}
+        assert int(response.headers["content-length"]) == len(response.content)
+
+
 def test_login_sets_seven_day_httponly_cookie(build_app):
     client = TestClient(build_app(), base_url="http://127.0.0.1")
     with client:

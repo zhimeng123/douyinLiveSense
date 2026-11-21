@@ -116,22 +116,19 @@ class AuthMiddleware:
             await send({"type": "websocket.close", "code": 1008})
             return
         if path == "/api" or path.startswith("/api/"):
+            # 中文按 UTF-8 是 3 字节，长度必须按实际 body 计算，否则响应会被截断。
+            body = '{"detail":"请先登录。"}'.encode()
             await send(
                 {
                     "type": "http.response.start",
                     "status": 401,
                     "headers": [
                         (b"content-type", b"application/json; charset=utf-8"),
-                        (b"content-length", b"22"),
+                        (b"content-length", str(len(body)).encode()),
                     ],
                 }
             )
-            await send(
-                {
-                    "type": "http.response.body",
-                    "body": '{"detail":"请先登录。"}'.encode(),
-                }
-            )
+            await send({"type": "http.response.body", "body": body})
             return
         await send(
             {

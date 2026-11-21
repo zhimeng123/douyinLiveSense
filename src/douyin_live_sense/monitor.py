@@ -226,6 +226,7 @@ class Monitor:
                     self.state = "reconnecting" if self.session else "checking"
                     room = await self.source.resolve(self.room_id)
                     self.anchor_name, self.title = room.anchor_name, room.title
+                    self.retry_index = 0
                     if not room.is_live:
                         self._finish_session("offline")
                         self.state = "waiting"
@@ -285,13 +286,22 @@ class Monitor:
                     delays = self.settings.retry_delays
                     delay = delays[min(self.retry_index, len(delays) - 1)]
                     self.retry_index += 1
+                    if self.retry_index >= 5:
+                        raise NeedsAttention(
+                            "连续 5 次无法解析直播间，请确认直播间 ID 是否存在或已被封禁。"
+                        ) from error
                     await self._sleep(delay)
         except asyncio.CancelledError:
             raise
         except Exception as error:
             # A failed worker must leave a visible state, stop automatic restoration,
             # and preserve the exception's useful context without exposing credentials.
-            self.last_error = redact(f"{type(error).__name__}: {error}", self.settings.cookie)
+            message = (
+                str(error)
+                if isinstance(error, NeedsAttention)
+                else f"{type(error).__name__}: {error}"
+            )
+            self.last_error = redact(message, self.settings.cookie)
             logger.error("守卫需要处理: %s", self.last_error)
             if isinstance(error, SourceError) and error.diagnostic:
                 logger.error("详情: %s", redact(error.diagnostic, self.settings.cookie))

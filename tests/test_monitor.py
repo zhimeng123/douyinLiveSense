@@ -98,7 +98,7 @@ async def test_reconnect_preserves_session_new_epoch_and_gap(settings):
         store.close()
 
 
-async def test_network_resolution_errors_retry_and_clear(settings):
+async def test_network_error_still_retries(settings):
     store = Storage(settings.data_dir)
     source = FakeSource(SourceError("DNS failed"), SourceError("timeout"), live_room())
     monitor = Monitor(store, settings, source, FakeCapture())
@@ -112,21 +112,57 @@ async def test_network_resolution_errors_retry_and_clear(settings):
         store.close()
 
 
-async def test_backoff_schedule_and_stop_interrupts_wait(settings):
+async def test_five_consecutive_resolve_failures_need_attention(settings):
+    store = Storage(settings.data_dir)
+    source = FakeSource(*(SourceError("解析失败") for _ in range(5)))
+    monitor = Monitor(store, settings, source, FakeCapture())
+    waits = []
+
+    async def record_sleep(seconds):
+        waits.append(seconds)
+
+    monitor._sleep = record_sleep
+    try:
+        await monitor.start("123")
+        await eventually(lambda: monitor.state == "needs_attention")
+        assert len(source.calls) == 5 and len(waits) == 4
+        assert not monitor.enabled and not store.guard()["enabled"]
+        assert "连续 5 次" in monitor.status()["last_error"]
+    finally:
+        await monitor.shutdown()
+        store.close()
+
+
+async def test_unavailable_room_stops_immediately(settings):
+    store = Storage(settings.data_dir)
+    source = FakeSource(SourceError("该内容暂时无法无法查看"))
+    monitor = Monitor(store, settings, source, FakeCapture())
+    try:
+        await monitor.start("123")
+        await eventually(lambda: monitor.state == "needs_attention")
+        assert len(source.calls) == 1
+        assert "连续 5 次" in monitor.status()["last_error"]
+        assert not monitor.enabled and not store.guard()["enabled"]
+    finally:
+        await monitor.shutdown()
+        store.close()
+
+
+async def test_backoff_wait_is_interruptible_by_stop(settings):
     store = Storage(settings.data_dir)
     monitor = Monitor(store, settings, FakeSource(SourceError("network failed")), FakeCapture())
     waits = []
 
     async def record_sleep(seconds):
         waits.append(seconds)
-        if len(waits) >= 6:
+        if len(waits) >= 1:
             await asyncio.Event().wait()
 
     monitor._sleep = record_sleep
     try:
         await monitor.start("123")
-        await eventually(lambda: len(waits) >= 6)
-        assert waits == [0.01, 0.02, 0.03, 0.04, 0.04, 0.04]
+        await eventually(lambda: len(waits) >= 1)
+        assert waits == [0.01]
         await monitor.stop()
     finally:
         await monitor.shutdown()

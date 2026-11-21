@@ -29,7 +29,11 @@
         ><span class="brand-icon">◉</span> ValuSense<span class="brand-note"
           >直播监听守卫</span
         ></a
-      ><span class="local-label"><i></i> 本机运行 · 音频留在本地</span>
+      ><span id="analysis-status" class="analysis-status">
+        <span id="analysis-pill" class="analysis-pill" role="status" aria-live="polite"
+          ><i></i><span id="analysis-global">正在检查模型</span></span
+        ><span id="model-hint" class="analysis-hint"></span>
+      </span>
     </header>
     <main>
       <p id="page-error" class="notice" role="alert" hidden></p>
@@ -69,10 +73,6 @@
               停止
             </button>
           </div>
-          <label class="analysis-switch" for="realtime">
-            <input id="realtime" type="checkbox" /> 实时生成普通话记录
-            <small>勾选后开启守卫时即实时分析；中途开启会先补分析本场次之前保存的音频。</small>
-          </label>
         </form>
         <div id="notice" class="notice" role="alert" hidden></div>
         <div class="live-summary">
@@ -98,10 +98,6 @@
             ><strong id="last-audio" class="time-value">—</strong>
           </div>
         </div>
-        <div class="card-foot">
-          <span id="segment-rule">按采样保存 30 秒 WAV · 停止或断线保留尾段</span
-          ><span id="save-path" title="音频保存目录"></span>
-        </div>
         </div>
         <div id="panel-local" class="mode-panel" role="tabpanel" aria-labelledby="tab-local" hidden>
         <form id="local-form">
@@ -115,10 +111,6 @@
               开启录音 <span>●</span>
             </button>
           </div>
-          <label class="analysis-switch" for="local-realtime">
-            <input id="local-realtime" type="checkbox" /> 实时生成普通话记录
-            <small>采集本机音频并复用现有分析管道；关闭标签页即停止。</small>
-          </label>
           <p id="local-hint" class="subtle">
             选择“系统声音”时，请在浏览器弹窗中勾选“分享音频”，并保持本标签页打开。
           </p>
@@ -137,18 +129,29 @@
           <div><span>最近音频到达时刻</span><strong id="local-last" class="time-value">—</strong></div>
         </div>
         <div class="transcript-heading local-report-heading">
-          <h3>实时分析</h3>
+          <h3>本场文字记录</h3>
           <div id="local-downloads" class="transcript-downloads" hidden></div>
         </div>
         <div id="local-report" class="local-report"></div>
         </div>
-      </section>
-      <section class="analysis-summary" aria-label="分析状态">
-        <div class="transcript-heading"><h2>本地分析</h2>
-          <button id="analyse-current" class="secondary" disabled>分析当前场次全部切片</button>
+        <div id="analysis-bar" class="analysis-bar" aria-label="分析">
+          <div class="analysis-bar-text">
+            <label class="switch" for="realtime">
+              <input id="realtime" type="checkbox" role="switch" />
+              <span class="switch-track" aria-hidden="true"><i></i></span>
+              <span class="switch-label">实时分析</span>
+            </label>
+            <small id="realtime-hint">开启后新采集的音频会立即生成普通话记录；运行中开启会先补分析本场次已保存的音频。</small>
+          </div>
+          <div class="analysis-bar-actions">
+            <span id="analysis-progress" class="subtle">暂无场次</span>
+            <button id="analyse-current" class="secondary" disabled>补齐未分析切片</button>
+          </div>
         </div>
-        <p id="analysis-global">正在检查模型</p>
-        <p id="model-hint" class="subtle"></p>
+        <div class="card-foot">
+          <span id="segment-rule">按采样保存 30 秒 WAV · 停止或断线保留尾段</span
+          ><span id="save-path" title="音频保存目录"></span>
+        </div>
       </section>
       <section class="history-section" aria-labelledby="history-heading">
         <div class="section-heading">

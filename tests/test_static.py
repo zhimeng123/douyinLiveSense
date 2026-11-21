@@ -282,9 +282,9 @@ state.busy = true;
 syncAnalysisControls();
 seen.busy = $("realtime").disabled;
 state.busy = false;
-state.monitor = {{ session_id: null, mode: "local" }};
+state.localSocket = {{ readyState: 1 }};
 syncAnalysisControls();
-seen.localRecording = $("realtime").disabled;
+seen.socketOpen = $("realtime").disabled;
 process.stdout.write(JSON.stringify(seen));
 """
     script_path = tmp_path / "controls-harness.cjs"
@@ -297,15 +297,147 @@ process.stdout.write(JSON.stringify(seen));
         "readyIdle": True,
         "recordOnly": True,
         "busy": True,
-        "localRecording": True,
+        "socketOpen": True,
     }
+
+
+def test_analysis_bar_hosts_switch_and_fill_button():
+    html = (STATIC / "index.html").read_text()
+    parser = _IdParentParser()
+    parser.feed(html)
+    for element in ("realtime", "realtime-hint", "analyse-current", "analysis-progress"):
+        assert f'id="{element}"' in html
+    # 两个采集面板共用同一组分析控件，不再各自放置。
+    assert "local-realtime" not in html
+    assert parser.parents["analyse-current"] == "analysis-bar"
+    assert "analysis-bar" in parser.descendants
+    assert "realtime" in parser.descendants["analysis-bar"]
+    assert "analysis-summary" not in html
+
+
+def test_header_shows_analysis_status_instead_of_local_label():
+    html = (STATIC / "index.html").read_text()
+    parser = _IdParentParser()
+    parser.feed(html)
+    assert parser.parents["analysis-pill"] == "analysis-status"
+    assert parser.parents["analysis-global"] == "analysis-pill"
+    assert parser.parents["model-hint"] == "analysis-status"
+    assert "local-label" not in html
+    assert "本机运行 · 音频留在本地" not in html
 
 
 def test_realtime_label_explains_pre_start_selection():
     html = (STATIC / "index.html").read_text()
-    label = html[html.index('for="realtime"'):]
-    label = label[:label.index("</label>")]
-    assert "开启守卫时" in label
+    hint = html[html.index('id="realtime-hint"'):]
+    hint = hint[:hint.index("</small>")]
+    assert "普通话记录" in hint
+    assert "补分析" in hint
+
+
+STATUS_HARNESS_HEAD = """
+const registry = {};
+function $(id) {
+  return (registry[id] ||= {
+    textContent: "", className: "", hidden: false, disabled: false,
+    children: [], title: "",
+    replaceChildren(...items) { this.children = items; },
+    setAttribute(name, value) { this[name] = value; },
+  });
+}
+const state = { recognition: true, monitor: null, visibleSessions: new Set(), sessions: new Map() };
+"""
+
+
+def test_header_status_reflects_analysis_state(tmp_path):
+    js = (STATIC / "app.js").read_text()
+    src = js[js.index('const ANALYSIS_DETAIL'):js.index("function setHomeTab")]
+    script = f"""
+{STATUS_HARNESS_HEAD}
+function stamp() {{ return "—"; }}
+{src}
+const seen = {{}};
+const status = (recognition, models, worker, lastError = "") => {{
+  state.recognition = recognition;
+  const detail = {{ ready: models, reason: models ? "" : "未准备模型" }};
+  renderAnalysisStatus({{ models: detail, worker_state: worker, last_error: lastError }});
+  return {{
+    text: $("analysis-global").textContent,
+    kind: $("analysis-pill").className,
+    hint: $("model-hint").textContent,
+  }};
+}};
+seen.ready = status(true, true, "idle");
+seen.processing = status(true, true, "processing");
+seen.notReady = status(true, false, "idle");
+seen.recordOnly = status(false, false, "idle");
+seen.workerError = status(true, true, "idle", "分析进程崩溃");
+process.stdout.write(JSON.stringify(seen));
+"""
+    script_path = tmp_path / "status-harness.cjs"
+    script_path.write_text(script)
+    completed = subprocess.run(
+        ["node", str(script_path)], capture_output=True, text=True, check=False
+    )
+    assert completed.returncode == 0, completed.stderr
+    seen = json.loads(completed.stdout)
+    assert seen["ready"]["text"] == "模型已就绪"
+    assert seen["ready"]["kind"] == "analysis-pill ready"
+    assert "Community-1" in seen["ready"]["hint"]
+    assert seen["processing"]["text"] == "模型正在分析音频"
+    assert seen["processing"]["kind"] == "analysis-pill processing"
+    assert seen["notReady"]["text"] == "模型未就绪"
+    assert seen["notReady"]["kind"] == "analysis-pill error"
+    assert seen["notReady"]["hint"] == "未准备模型"
+    assert seen["recordOnly"]["text"] == "仅录音模式"
+    assert seen["recordOnly"]["kind"] == "analysis-pill record"
+    assert "Community-1" in seen["recordOnly"]["hint"]
+    assert seen["workerError"]["text"] == "分析出错"
+    assert seen["workerError"]["hint"] == "分析进程崩溃"
+
+
+def test_fill_button_targets_latest_session_after_stopping(tmp_path):
+    """停止守卫后 monitor.session_id 为空，补分析按钮仍应指向最近的场次。"""
+    js = (STATIC / "app.js").read_text()
+    src = js[js.index("// 采集进行中就用当前场次"):js.index("function updateModelPolling")]
+    script = f"""
+{STATUS_HARNESS_HEAD}
+function stamp(value) {{ return value; }}
+{src}
+const old = {{
+  id: "old",
+  data: {{ id: "old", started_at: "2026-11-20T10:00:00", segment_count: 3 }},
+}};
+const latest = {{
+  id: "new",
+  data: {{ id: "new", started_at: "2026-11-21T10:00:00", segment_count: 9 }},
+}};
+state.sessions = new Map([["old", old], ["new", latest]]);
+state.visibleSessions = new Set(["old", "new"]);
+const seen = {{}};
+seen.live = analysisTarget();
+state.monitor = {{ session_id: "live-id" }};
+seen.liveSession = analysisTarget();
+state.monitor = {{ session_id: null }};
+renderAnalysisBar();
+seen.stoppedText = $("analysis-progress").textContent;
+state.visibleSessions = new Set();
+seen.emptyTarget = analysisTarget();
+renderAnalysisBar();
+seen.emptyText = $("analysis-progress").textContent;
+process.stdout.write(JSON.stringify(seen));
+"""
+    script_path = tmp_path / "target-harness.cjs"
+    script_path.write_text(script)
+    completed = subprocess.run(
+        ["node", str(script_path)], capture_output=True, text=True, check=False
+    )
+    assert completed.returncode == 0, completed.stderr
+    seen = json.loads(completed.stdout)
+    assert seen["live"] == "new"
+    assert seen["liveSession"] == "live-id"
+    assert seen["stoppedText"] == "最近场次 2026-11-21T10:00:00 · 9 段"
+    assert seen["emptyTarget"] is None
+    assert seen["emptyText"] == "暂无场次"
 
 
 def test_models_mode_is_called_local_model_recognition():

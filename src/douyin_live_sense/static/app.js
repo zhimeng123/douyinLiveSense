@@ -156,16 +156,41 @@ async function loadModels() {
   updateModelPolling();
 }
 function syncAnalysisControls() {
-  // 实时生成既是“开守卫时”的选项，也是运行中的开关，未开守卫时也应可勾选。
-  // 本机录音进行中不能开守卫，因此仍然禁用。
-  const localRunning = state.monitor?.mode === "local";
-  $("realtime").disabled = !state.recognition || state.busy || state.analysisBusy || localRunning;
-  $("local-realtime").disabled = !state.recognition || state.localBusy || !!state.localSocket;
-  $("analyse-current").disabled = !state.recognition || state.analysisBusy || !state.monitor?.session_id;
+  // 实时分析是“新采集音频要不要立即分析”的总开关，守卫和本机录音共用。
+  // 未开始采集时只是记下选择，点开始按钮时随请求提交；运行中切换立即生效。
+  $("realtime").disabled = !state.recognition || state.busy || state.analysisBusy
+    || !!state.localSocket;
+  $("analyse-current").disabled = !state.recognition || state.analysisBusy || !analysisTarget();
   for (const view of state.sessions.values()) {
     if (view.generate) view.generate.disabled = !state.recognition || !!view.busy || !view.hasReadyAudio;
     if (view.retry) view.retry.disabled = !state.recognition || !!view.busy;
     for (const clip of view.clipViews.values()) if (clip.data) updateClip(clip, clip.data);
+  }
+  renderAnalysisBar();
+}
+// 采集进行中就用当前场次；停止后回退到最近一个场次，这样停止守卫也能补分析。
+function analysisTarget() {
+  if (state.monitor?.session_id) return state.monitor.session_id;
+  const views = Array.from(state.sessions.values())
+    .filter((view) => view.data && state.visibleSessions.has(view.id));
+  views.sort((left, right) => right.data.started_at.localeCompare(left.data.started_at));
+  return views.length ? views[0].id : null;
+}
+function renderAnalysisBar() {
+  const target = analysisTarget();
+  const live = !!state.monitor?.session_id;
+  const view = target ? state.sessions.get(target) : null;
+  const segments = live ? (state.monitor?.segment_count ?? 0) : (view?.data?.segment_count ?? 0);
+  $("analysis-progress").textContent = !target
+    ? "暂无场次"
+    : live
+      ? `当前场次 · 已保存 ${segments} 段`
+      : `最近场次 ${stamp(view.data.started_at)} · ${segments} 段`;
+  $("realtime-hint").textContent = state.monitor?.enabled
+    ? "运行中切换立即生效；开启时会先补分析本场次已保存的音频。"
+    : "开启后新采集的音频会立即生成普通话记录。";
+  if (!state.recognition) {
+    $("analysis-progress").textContent = target ? `仅录音模式 · 已保存 ${segments} 段` : "仅录音模式";
   }
 }
 function updateModelPolling() {
@@ -318,6 +343,33 @@ function secondsLabel(value) {
   const number = Number(value) || 0;
   return Number.isInteger(number) ? String(number) : number.toFixed(1);
 }
+const ANALYSIS_DETAIL = "本地运行：Community-1 人物判断 + Paraformer 普通话转写。分段分析会有处理延迟。";
+function renderAnalysisStatus(global) {
+  const pill = $("analysis-pill");
+  const detail = state.recognition ? (global.last_error || global.models.reason || "") : "";
+  let text;
+  let kind;
+  if (!state.recognition) {
+    text = "仅录音模式";
+    kind = "record";
+  } else if (global.last_error) {
+    text = "分析出错";
+    kind = "error";
+  } else if (!global.models.ready) {
+    text = "模型未就绪";
+    kind = "error";
+  } else if (global.worker_state === "processing") {
+    text = "模型正在分析音频";
+    kind = "processing";
+  } else {
+    text = "模型已就绪";
+    kind = "ready";
+  }
+  $("analysis-global").textContent = text;
+  pill.className = `analysis-pill ${kind}`;
+  pill.title = detail || ANALYSIS_DETAIL;
+  $("model-hint").textContent = detail || ANALYSIS_DETAIL;
+}
 function setHomeTab(tab) {
   state.homeTab = tab;
   for (const name of ["douyin", "local"]) {
@@ -356,6 +408,8 @@ function renderMonitor(data) {
     else if (data.enabled) setHomeTab("douyin");
   }
   $("segment-rule").textContent = `按采样保存 ${secondsLabel(data.segment_seconds)} 秒 WAV · 停止或断线保留尾段`;
+  if (data.enabled) $("realtime").checked = data.realtime_analysis;
+  else if (wasEnabled) $("realtime").checked = false;
   if (data.mode === "local") {
     $("connection-dot").className = "connection-dot waiting";
     $("anchor").textContent = "本机录音进行中";
@@ -363,14 +417,10 @@ function renderMonitor(data) {
     $("start").disabled = true;
     $("stop").disabled = true;
     $("room").disabled = true;
-    $("realtime").disabled = true;
-    $("analyse-current").disabled = state.analysisBusy || !data.session_id;
     updateBadge();
     notice(data.last_error || state.actionError);
     return;
   }
-  if (data.enabled) $("realtime").checked = data.realtime_analysis;
-  else if (wasEnabled) $("realtime").checked = false;
   $("connection-dot").className = `connection-dot ${data.state}`;
 
   $("anchor").textContent = data.anchor_name || (data.enabled ? "正在获取直播间信息" : "准备开始监听");
@@ -385,7 +435,6 @@ function renderMonitor(data) {
   $("stop").disabled = state.busy || (!data.enabled && !data.session_id);
   $("room").disabled = data.enabled || state.busy;
   if (data.enabled) $("room").value = data.room_id;
-  $("analyse-current").disabled = state.analysisBusy || !data.session_id;
   updateBadge();
   notice(data.last_error || state.actionError);
 }
@@ -963,7 +1012,7 @@ async function startLocal() {
     if (!navigator.mediaDevices) throw new Error("此浏览器不支持音频采集。");
     const source = $("local-source").value;
     const stream = await acquireStream(source);
-    const realtime = state.recognition && $("local-realtime").checked;
+    const realtime = state.recognition && $("realtime").checked;
     const scheme = location.protocol === "https:" ? "wss" : "ws";
     const socket = new WebSocket(
       `${scheme}://${location.host}/api/local/audio?source=${source}&realtime=${realtime}`,
@@ -1040,8 +1089,6 @@ function updateLocal() {
     ? "处理中…"
     : local ? "停止录音" : "开启录音";
   $("local-source").disabled = state.localBusy || local || busyElsewhere;
-  $("local-realtime").disabled = !state.recognition || state.localBusy || local || busyElsewhere;
-  if (local) $("local-realtime").checked = data.realtime_analysis;
   $("local-title").textContent = local ? data.title || "本机录音" : "未开始";
   $("local-status-text").textContent = local
     ? (data.last_audio_at ? `正在采集 · 最近到达 ${clock(data.last_audio_at)}` : "正在等待音频…")
@@ -1141,8 +1188,7 @@ async function refresh(force = false) {
       state.settingsLocked = !!monitor.enabled;
       renderSettings();
     }
-    $("analysis-global").textContent = state.recognition && global.models.ready ? (global.worker_state === "processing" ? "模型正在分析音频" : "模型已就绪") : "仅录音模式";
-    $("model-hint").textContent = global.last_error || global.models.reason || "本地运行：Community-1 人物判断 + Paraformer 普通话转写。分段分析会有处理延迟。";
+    renderAnalysisStatus(global);
     if (force || state.tick++ % 5 === 0) await loadSessions();
     if (state.route === "home") {
       for (const view of state.sessions.values()) if (view.root.isConnected && view.root.open) await loadSession(view);
@@ -1180,16 +1226,17 @@ $("monitor-form").onsubmit = (event) => {
 };
 $("stop").onclick = () => act("/api/monitor/stop");
 $("analyse-current").onclick = async () => {
-  if (!state.monitor?.session_id) return;
+  const target = analysisTarget();
+  if (!target) return;
   state.analysisBusy = true;
   $("analyse-current").disabled = true;
-  try { await requestSession(state.monitor.session_id); }
+  try { await requestSession(target); }
   catch (error) { notice(error.message); }
   finally { state.analysisBusy = false; await refresh(); }
 };
 $("realtime").onchange = async () => {
-  // 守卫未运行时只是记下选择，会在点击“开启守卫”时随请求提交。
-  if (!state.monitorEnabled) return;
+  // 采集未运行时只是记下选择，会在点“开启守卫”或“开启录音”时随请求提交。
+  if (!state.monitor?.enabled) return;
   state.analysisBusy = true;
   $("realtime").disabled = true;
   try {

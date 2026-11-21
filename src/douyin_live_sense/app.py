@@ -4,9 +4,11 @@ import shutil
 import time
 import zipfile
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 from typing import Annotated
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
@@ -59,6 +61,40 @@ def header_value(scope: dict, name: bytes) -> str:
         if key == name:
             return value.decode("latin-1")
     return ""
+
+
+def session_start_label(timestamp: str) -> str:
+    """场次开启时间，按北京时间显示为 2026/11/21 20:52:31。"""
+    return (
+        datetime.fromisoformat(timestamp)
+        .astimezone(ZoneInfo("Asia/Shanghai"))
+        .strftime("%Y/%m/%d %H:%M:%S")
+    )
+
+
+def segment_start_label(timestamp: str) -> str:
+    """音频切片开始时间，按北京时间格式化为文件名安全的形式：2026-11-21 20-52-31。"""
+    return (
+        datetime.fromisoformat(timestamp)
+        .astimezone(ZoneInfo("Asia/Shanghai"))
+        .strftime("%Y-%m-%d %H-%M-%S")
+    )
+
+
+def audio_member_names(anchor: str, segments: list[dict]) -> list[str]:
+    """压缩包内音频成员名：主播名 · 该段开始时间；同名时补序号，避免互相覆盖。"""
+    names: list[str] = []
+    seen: set[str] = set()
+    for segment in segments:
+        base = f"{anchor or '直播'} · {segment_start_label(segment['start_at'])}"
+        name = f"{base}.wav"
+        index = 2
+        while name in seen:
+            name = f"{base} ({index}).wav"
+            index += 1
+        seen.add(name)
+        names.append(name)
+    return names
 
 
 def request_scheme(scope: dict, settings: Settings) -> str:
@@ -716,16 +752,19 @@ def create_app(
         if not segments:
             raise HTTPException(404, "此场次尚无已保存完成的音频切片。")
 
+        anchor = re.sub(r'[\\/:*?"<>|\x00-\x1f\x7f-\x9f]', "", session["anchor_name"] or "")[:40]
+
         tmp_dir = store.data_dir / "tmp"
         tmp_dir.mkdir(parents=True, exist_ok=True)
         zip_path = tmp_dir / f"session-{session_id}-{uuid4().hex}.zip"
 
         def build_zip() -> None:
             try:
+                names = audio_member_names(anchor, segments)
                 with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_STORED) as archive:
-                    for segment in segments:
+                    for segment, member in zip(segments, names, strict=True):
                         path = store.segment_path(segment)
-                        with path.open("rb") as source_file, archive.open(path.name, "w") as target:
+                        with path.open("rb") as source_file, archive.open(member, "w") as target:
                             shutil.copyfileobj(source_file, target, length=1024 * 1024)
             except BaseException:
                 zip_path.unlink(missing_ok=True)
@@ -739,8 +778,7 @@ def create_app(
             zip_path.unlink(missing_ok=True)
             raise
 
-        anchor = re.sub(r'[\\/:*?"<>|\x00-\x1f\x7f-\x9f]', "", session["anchor_name"] or "")[:40]
-        filename = f"{anchor or '直播'}-{session['started_at'][:10]}.zip"
+        filename = f"{anchor or '直播'} · {session_start_label(session['started_at'])}.zip"
         return FileResponse(
             zip_path,
             media_type="application/zip",

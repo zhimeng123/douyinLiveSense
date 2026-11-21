@@ -4,7 +4,7 @@ from urllib.parse import unquote
 from conftest import FakeCapture, FakeSource, login
 from fastapi.testclient import TestClient
 
-from douyin_live_sense.app import create_app
+from douyin_live_sense.app import audio_member_names, create_app, session_start_label
 from douyin_live_sense.audio import SegmentWriter
 from douyin_live_sense.monitor import Monitor
 from douyin_live_sense.storage import Storage, utc_now
@@ -38,15 +38,14 @@ def test_session_zip_contains_all_ready_segments(settings, auth):
             response = client.get(f"/api/sessions/{session['id']}/audio.zip")
             assert response.status_code == 200
             assert response.headers["content-type"] == "application/zip"
-            assert "主播甲-" in unquote(response.headers["content-disposition"])
+            expected_name = f"主播甲 · {session_start_label(session['started_at'])}.zip"
+            assert expected_name in unquote(response.headers["content-disposition"])
             import io
 
             with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
-                assert archive.namelist() == [
-                    f"{segment['sequence']:06d}_{segment['id']}.wav" for segment in segments
-                ]
-                for segment in segments:
-                    member = f"{segment['sequence']:06d}_{segment['id']}.wav"
+                expected_members = audio_member_names("主播甲", segments)
+                assert archive.namelist() == expected_members
+                for segment, member in zip(segments, expected_members, strict=True):
                     assert archive.read(member) == source_data[segment["id"]]
     finally:
         client.close()
@@ -66,7 +65,7 @@ def test_session_zip_skips_pending_segments(settings, auth):
             import io
 
             with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
-                assert archive.namelist() == [f"{ready['sequence']:06d}_{ready['id']}.wav"]
+                assert archive.namelist() == audio_member_names("主播", [ready])
     finally:
         client.close()
         store.close()

@@ -289,7 +289,7 @@ def test_api_clip_versions_sorted_cursor_exports_and_origin(settings, auth):
         monitor, settings, FixtureWorker(settings.data_dir), lambda: {"ready": True}
     )
     preferences = Preferences(settings.data_dir / "preferences.json")
-    preferences.set_enabled(True)
+    preferences.update(mode="models")
     segment = store.segments(session["id"])[1]
     with TestClient(
         create_app(settings, monitor, service, auth=auth, preferences=preferences),

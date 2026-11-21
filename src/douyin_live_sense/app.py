@@ -31,7 +31,7 @@ from .model_manager import (
 from .models import model_status
 from .monitor import Monitor, MonitorConflict
 from .platform_support import analysis_supported
-from .preferences import Preferences
+from .preferences import MAX_SEGMENT_SECONDS, MIN_SEGMENT_SECONDS, MODES, Preferences
 from .source import NeedsAttention
 from .storage import InstanceLock, Storage
 from .transcripts import chronological, speaker_label
@@ -162,7 +162,9 @@ class RealtimeRequest(BaseModel):
 
 
 class PreferencesRequest(BaseModel):
-    recognition: bool
+    recognition: bool | None = None
+    mode: str | None = None
+    segment_seconds: int | None = None
 
 
 class TokenRequest(BaseModel):
@@ -195,7 +197,9 @@ def create_app(
     if not auth.exists():
         raise RuntimeError("尚未设置登录密码，请先运行 ./scripts/setup.sh 或 init-auth。")
     limiter = limiter or LoginLimiter()
-    preferences = preferences or Preferences(settings.data_dir / "preferences.json")
+    preferences = Preferences(
+        settings.data_dir / "preferences.json", settings.segment_seconds
+    ) if preferences is None else preferences
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -490,10 +494,18 @@ def create_app(
 
     @app.get("/api/preferences")
     async def get_preferences():
+        return preferences_payload()
+
+    def preferences_payload() -> dict:
         supported, reason = analysis_supported()
+        prefs = app.state.preferences
         return {
-            "recognition": app.state.preferences.enabled(),
-            "mode": "full" if app.state.preferences.enabled() else "record",
+            "mode": prefs.mode(),
+            "recognition": prefs.enabled(),
+            "segment_seconds": prefs.segment_seconds(),
+            "segment_min_seconds": MIN_SEGMENT_SECONDS,
+            "segment_max_seconds": MAX_SEGMENT_SECONDS,
+            "locked": bool(app.state.monitor.enabled),
             "supported": supported,
             "reason": reason,
         }
@@ -547,21 +559,41 @@ def create_app(
 
     @app.put("/api/preferences")
     async def set_preferences(body: PreferencesRequest):
-        if body.recognition:
-            supported, reason = analysis_supported()
-            if not supported:
-                raise HTTPException(409, reason)
-            readiness = model_status(settings)
-            if not readiness["ready"]:
-                missing = []
-                for component in readiness.get("components", {}).values():
-                    missing.extend(component.get("missing", []))
+        prefs = app.state.preferences
+        requested_mode = body.mode
+        if requested_mode is None and body.recognition is not None:
+            requested_mode = "models" if body.recognition else "record"
+        if requested_mode is not None:
+            if requested_mode not in MODES:
+                raise HTTPException(422, "识别方式必须为 record、models 或 feishu。")
+            if requested_mode == "feishu":
+                raise HTTPException(409, "飞书秒记尚未支持。")
+            if requested_mode != prefs.mode() and app.state.monitor.enabled:
                 raise HTTPException(
-                    409,
-                    detail={"detail": "模型未就绪。", "missing": sorted(set(missing))},
+                    409, "任务进行中，无法更改识别方式。请先停止直播间守卫或本机录音。"
                 )
-        app.state.preferences.set_enabled(body.recognition)
-        return {"recognition": app.state.preferences.enabled()}
+            if requested_mode == "models":
+                supported, reason = analysis_supported()
+                if not supported:
+                    raise HTTPException(409, reason)
+                readiness = model_status(settings)
+                if not readiness["ready"]:
+                    missing = []
+                    for component in readiness.get("components", {}).values():
+                        missing.extend(component.get("missing", []))
+                    raise HTTPException(
+                        409,
+                        detail={"detail": "模型未就绪。", "missing": sorted(set(missing))},
+                    )
+        if body.segment_seconds is not None and not (
+            MIN_SEGMENT_SECONDS <= body.segment_seconds <= MAX_SEGMENT_SECONDS
+        ):
+            raise HTTPException(
+                422,
+                f"切片时长必须在 {MIN_SEGMENT_SECONDS} 到 {MAX_SEGMENT_SECONDS} 秒之间。",
+            )
+        prefs.update(mode=requested_mode, segment_seconds=body.segment_seconds)
+        return preferences_payload()
 
     @app.get("/api/segments/{segment_id}/analysis")
     async def get_segment_analysis(segment_id: str):

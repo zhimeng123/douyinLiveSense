@@ -63,9 +63,66 @@ def test_api_refuses_enabling_without_models(settings, auth, monkeypatch):
         create_app(settings, monitor, auth=auth), base_url="http://127.0.0.1"
     ) as client:
         login(client)
-        response = client.put("/api/preferences", json={"recognition": True})
+        response = client.put("/api/preferences", json={"mode": "models"})
         assert response.status_code == 409
         assert "asr" in response.text
+
+
+def test_preferences_api_reports_mode_and_duration(build_app):
+    client = TestClient(build_app(), base_url="http://127.0.0.1")
+    with client:
+        login(client)
+        body = client.get("/api/preferences").json()
+        assert body["mode"] == "record"
+        assert body["recognition"] is False
+        assert body["segment_seconds"] == 0.002
+        assert body["locked"] is False
+        assert body["segment_min_seconds"] == 1
+        assert body["segment_max_seconds"] == 14_400
+
+
+def test_preferences_api_sets_duration(build_app):
+    client = TestClient(build_app(), base_url="http://127.0.0.1")
+    with client:
+        login(client)
+        response = client.put("/api/preferences", json={"segment_seconds": 5})
+        assert response.status_code == 200
+        assert response.json()["segment_seconds"] == 5
+        assert client.get("/api/preferences").json()["segment_seconds"] == 5
+
+
+@pytest.mark.parametrize("seconds", [0, 14_401])
+def test_preferences_api_rejects_bad_duration(build_app, seconds):
+    client = TestClient(build_app(), base_url="http://127.0.0.1")
+    with client:
+        login(client)
+        response = client.put("/api/preferences", json={"segment_seconds": seconds})
+        assert response.status_code == 422
+
+
+def test_feishu_mode_is_not_available_yet(build_app):
+    client = TestClient(build_app(), base_url="http://127.0.0.1")
+    with client:
+        login(client)
+        response = client.put("/api/preferences", json={"mode": "feishu"})
+        assert response.status_code == 409
+        assert "飞书" in response.text
+        assert client.get("/api/preferences").json()["mode"] == "record"
+
+
+def test_mode_cannot_change_while_task_running(build_app, monkeypatch):
+    monkeypatch.setattr(
+        "douyin_live_sense.app.model_status",
+        lambda settings: {"ready": True, "reason": "", "components": {}},
+    )
+    client = TestClient(build_app(), base_url="http://127.0.0.1")
+    with client:
+        login(client)
+        client.app.state.monitor.enabled = True
+        response = client.put("/api/preferences", json={"mode": "models"})
+        assert response.status_code == 409
+        assert client.get("/api/preferences").json()["locked"] is True
+        assert client.put("/api/preferences", json={"segment_seconds": 8}).status_code == 200
 
 
 def test_analysis_request_is_noop_when_disabled(settings):

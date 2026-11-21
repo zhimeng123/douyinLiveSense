@@ -55,5 +55,5 @@ def test_preferences_enable_after_models_ready(build_model_app, monkeypatch):
     client = TestClient(build_model_app(), base_url="http://127.0.0.1")
     with client:
         login(client)
-        assert client.put("/api/preferences", json={"recognition": True}).status_code == 200
-        assert client.get("/api/preferences").json()["recognition"] is True
+        assert client.put("/api/preferences", json={"mode": "models"}).status_code == 200
+        assert client.get("/api/preferences").json()["mode"] == "models"

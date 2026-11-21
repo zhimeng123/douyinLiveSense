@@ -315,7 +315,7 @@ def test_analysis_api_incremental_docs_and_audio(analysis_settings, auth):
     worker = FixtureWorker(settings.data_dir)
     service = AnalysisService(monitor, settings, worker, lambda: {"ready": True, "reason": ""})
     preferences = Preferences(settings.data_dir / "preferences.json")
-    preferences.set_enabled(True)
+    preferences.update(mode="models")
     with TestClient(
         create_app(settings, monitor, service, auth=auth, preferences=preferences),
         base_url="http://127.0.0.1",

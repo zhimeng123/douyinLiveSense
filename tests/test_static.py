@@ -97,6 +97,52 @@ class _IdParentParser(HTMLParser):
                 return
 
 
+def test_audio_time_labels_say_they_are_a_moment():
+    html = (STATIC / "index.html").read_text()
+    assert html.count("最近音频到达时刻") == 2
+    assert "最近收到音频" not in html
+
+
+def test_audio_time_fields_render_beijing_suffix():
+    js = (STATIC / "app.js").read_text()
+    assert 'node("small", "北京时间")' in js
+    for element in ["last-audio", "local-last"]:
+        assert f'audioTime("{element}"' in js
+        assert f'$("{element}").textContent' not in js
+
+
+def test_audio_time_helper_only_suffixes_real_times():
+    js = (STATIC / "app.js").read_text()
+    start = js.index("function audioTime")
+    end = js.index("\n}\n", start) + 3
+    helper = js[start:end]
+    script = f"""
+const registry = {{}};
+function $(id) {{
+  return (registry[id] ||= {{
+    children: [],
+    replaceChildren(value) {{ this.children = [value]; }},
+    append(value) {{ this.children.push(value); }},
+  }});
+}}
+function node(tag, text) {{ return {{ tag, text }}; }}
+const document = {{ createTextNode: (text) => text }};
+function clock(value) {{ return value ? "11:51:54" : "—"; }}
+function stamp(value) {{ return value ? "2026/11/21 11:51:54" : "—"; }}
+{helper}
+audioTime("with-time", "2026-11-21T03:51:54+00:00");
+audioTime("without-time", null);
+const shape = (id) => registry[id].children;
+const result = {{ withTime: shape("with-time"), withoutTime: shape("without-time") }};
+process.stdout.write(JSON.stringify(result));
+"""
+    completed = subprocess.run(["node", "-e", script], capture_output=True, text=True, check=False)
+    assert completed.returncode == 0, completed.stderr
+    rendered = json.loads(completed.stdout)
+    assert rendered["withTime"] == ["11:51:54", {"tag": "small", "text": "北京时间"}]
+    assert rendered["withoutTime"] == ["—"]
+
+
 def test_app_js_calls_model_endpoints():
     js = (STATIC / "app.js").read_text()
     for endpoint in [

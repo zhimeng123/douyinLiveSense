@@ -26,6 +26,13 @@ const dateFormat = new Intl.DateTimeFormat("zh-CN", {
 });
 function clock(value) { return value ? timeFormat.format(new Date(value)) : "—"; }
 function stamp(value) { return value ? `${dateFormat.format(new Date(value))} ${clock(value)}` : "—"; }
+// 时刻与时长都显示成 HH:MM:SS，加时区后缀避免被读成时长。
+function audioTime(id, value) {
+  const target = $(id);
+  target.replaceChildren(document.createTextNode(clock(value)));
+  if (value) target.append(node("small", "北京时间"));
+  target.title = stamp(value);
+}
 function duration(value) {
   const s = Math.floor(value || 0);
   return [Math.floor(s / 3600), Math.floor(s / 60) % 60, s % 60].map((n) => String(n).padStart(2, "0")).join(":");
@@ -267,8 +274,7 @@ function renderMonitor(data) {
   $("live-title").textContent = data.title || (data.state === "waiting" ? "直播间尚未开播，守卫会持续等待。" : "输入直播间，开启后可关闭此网页；本机服务需要保持运行。");
   $("duration").textContent = duration(data.captured_seconds);
   $("segment-count").replaceChildren(document.createTextNode(`${data.segment_count} `), node("small", "段"));
-  $("last-audio").textContent = clock(data.last_audio_at);
-  $("last-audio").title = stamp(data.last_audio_at);
+  audioTime("last-audio", data.last_audio_at);
   $("retry").textContent = data.retry_in_seconds !== null ? `${Math.ceil(data.retry_in_seconds)} 秒后检查` : "";
   $("save-path").textContent = data.data_dir;
   $("save-path").title = data.data_dir;
@@ -919,7 +925,7 @@ function updateLocal() {
   $("local-state").className = `badge ${local ? data.state : "stopped"}`;
   $("local-title").textContent = local ? data.title || "本机录音" : "未开始";
   $("local-status-text").textContent = local
-    ? (data.last_audio_at ? `正在采集 · 最近 ${clock(data.last_audio_at)}` : "正在等待音频…")
+    ? (data.last_audio_at ? `正在采集 · 最近到达 ${clock(data.last_audio_at)}` : "正在等待音频…")
     : busyElsewhere
       ? "请先停止直播间守卫。"
       : "点击“开启录音”开始采集本机音频。";
@@ -928,7 +934,7 @@ function updateLocal() {
   $("local-count").replaceChildren(
     document.createTextNode(`${local ? data.segment_count : 0} `), node("small", "段"),
   );
-  $("local-last").textContent = local ? clock(data.last_audio_at) : "—";
+  audioTime("local-last", local ? data.last_audio_at : null);
 }
 $("local-toggle").onclick = () => {
   const local = state.monitor && state.monitor.mode === "local";

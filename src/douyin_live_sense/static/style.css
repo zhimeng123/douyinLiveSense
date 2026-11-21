@@ -346,6 +346,9 @@ select:focus {
 .metrics .time-value {
   font-size: 24px;
 }
+.metrics .time-value small {
+  margin-left: 6px;
+}
 .card-foot {
   border-top: 1px solid var(--border);
   padding: 14px 30px;

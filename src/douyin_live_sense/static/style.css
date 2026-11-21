@@ -740,6 +740,10 @@ footer {
 .mode-option strong { font-size: 13px; font-weight: 650; }
 .mode-option small { font-size: 11px; color: var(--muted); line-height: 1.5; }
 .mode-option em { margin-left: 6px; font-style: normal; font-size: 10px; color: #8b713d; background: #f8f3e4; padding: 1px 6px; border-radius: 20px; }
+.password-form { display: flex; flex-direction: column; max-width: 460px; }
+.password-form label { margin-top: 14px; }
+.password-form .models-actions { margin-top: 20px; }
+.password-form .notice { margin: 14px 0 0; }
 
 .models-mode { margin: 20px 0; color: var(--green); font-size: 13px; font-weight: 600; }
 .models-token-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }

@@ -849,9 +849,11 @@ function route() {
   $("home-view").hidden = routed.views.home;
   $("queue-view").hidden = routed.views.queue;
   $("settings-view").hidden = routed.views.settings;
+  $("password-view").hidden = routed.views.password;
   $("nav-home").setAttribute("aria-current", routed.nav.home);
   $("nav-queue").setAttribute("aria-current", routed.nav.queue);
   $("nav-settings").setAttribute("aria-current", routed.nav.settings);
+  $("nav-password").setAttribute("aria-current", routed.nav.password);
   if (routed.route === "settings") loadModels().catch((error) => showModelError(error.message));
   loadQueue().catch((error) => notice(error.message));
 }
@@ -1204,10 +1206,42 @@ function setMenuOpen(open) {
 }
 $("menu-toggle").onclick = () => setMenuOpen($("menu-toggle").getAttribute("aria-expanded") !== "true");
 $("menu-backdrop").onclick = () => setMenuOpen(false);
-for (const id of ["nav-home", "nav-queue", "nav-settings"]) $(id).onclick = () => setMenuOpen(false);
+for (const id of ["nav-home", "nav-queue", "nav-settings", "nav-password"]) $(id).onclick = () => setMenuOpen(false);
 $("logout").onclick = async () => {
   try { await api("/api/logout", { method: "POST" }); }
   finally { location.assign("/login"); }
+};
+$("password-form").onsubmit = async (event) => {
+  event.preventDefault();
+  const error = $("password-error");
+  const noticeBox = $("password-notice");
+  const current = $("password-current").value;
+  const next = $("password-new").value;
+  error.hidden = true;
+  noticeBox.hidden = true;
+  if (next.length < 12) {
+    error.textContent = "新密码至少 12 位。";
+    error.hidden = false;
+    return;
+  }
+  if (next !== $("password-confirm").value) {
+    error.textContent = "两次输入的新密码不一致。";
+    error.hidden = false;
+    return;
+  }
+  $("password-submit").disabled = true;
+  try {
+    await api("/api/password", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ current, new: next }),
+    });
+    $("password-form").reset();
+    noticeBox.textContent = "密码已更新，本设备保持登录。";
+    noticeBox.hidden = false;
+  } catch (failure) {
+    error.textContent = failure.message;
+    error.hidden = false;
+  } finally { $("password-submit").disabled = false; }
 };
 document.addEventListener("keydown", (event) => {
   if ($("menu-toggle").getAttribute("aria-expanded") !== "true") return;
@@ -1215,7 +1249,7 @@ document.addEventListener("keydown", (event) => {
     event.preventDefault();
     setMenuOpen(false);
   } else if (event.key === "Tab") {
-    const controls = [$("menu-toggle"), $("nav-home"), $("nav-queue"), $("nav-settings"), $("logout")];
+    const controls = [$("menu-toggle"), $("nav-home"), $("nav-queue"), $("nav-settings"), $("nav-password"), $("logout")];
     const next = (controls.indexOf(document.activeElement) + (event.shiftKey ? -1 : 1) + controls.length) % controls.length;
     event.preventDefault();
     controls[next].focus();

@@ -21,6 +21,7 @@
       <a href="#/home" id="nav-home">ValuSense</a>
       <a href="#/queue" id="nav-queue">分析队列 <span id="queue-badge">0</span></a>
       <a href="#/settings" id="nav-settings">网站配置</a>
+      <a href="#/password" id="nav-password">修改登录密码</a>
       <button id="logout" class="drawer-action" type="button">退出登录</button>
     </nav>
     <header class="topbar">
@@ -249,6 +250,34 @@
             <p class="subtle">范围 1 秒 – 14400 秒（4 小时）。时长很短会产生很多小文件。</p>
             <p id="segment-error" class="notice" role="alert" hidden></p>
           </div>
+        </section>
+      </section>
+      <section id="password-view" hidden aria-labelledby="password-heading">
+        <div class="intro">
+          <div class="eyebrow">ACCOUNT</div>
+          <h1 id="password-heading">修改登录密码</h1>
+          <p>新密码至少 12 位。修改后本设备和其他已登录设备都保持登录。</p>
+        </div>
+        <section class="models-card" aria-labelledby="password-card-heading">
+          <div class="card-heading">
+            <div>
+              <h2 id="password-card-heading">登录密码</h2>
+              <p class="subtle">修改后请牢记新密码，忘记时只能在服务器上重置</p>
+            </div>
+          </div>
+          <form id="password-form" class="models-content password-form">
+            <label for="password-current">当前密码</label>
+            <input id="password-current" type="password" autocomplete="current-password" required />
+            <label for="password-new">新密码</label>
+            <input id="password-new" type="password" autocomplete="new-password" minlength="12" required />
+            <label for="password-confirm">确认新密码</label>
+            <input id="password-confirm" type="password" autocomplete="new-password" minlength="12" required />
+            <div class="models-actions">
+              <button id="password-submit" type="submit" class="primary">保存新密码</button>
+            </div>
+            <p id="password-error" class="notice" role="alert" hidden></p>
+            <p id="password-notice" class="notice" role="status" hidden></p>
+          </form>
         </section>
       </section>
       <section id="player-section" class="player" hidden aria-label="音频回听">

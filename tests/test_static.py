@@ -63,6 +63,22 @@ def test_index_places_model_setup_in_menu_view():
     assert "models-card" not in parser.descendants["home-view"]
 
 
+def test_password_view_and_menu_item_exist():
+    html = (STATIC / "index.html").read_text()
+    parser = _IdParentParser()
+    parser.feed(html)
+    for element in (
+        "nav-password", "password-form", "password-current", "password-new",
+        "password-confirm", "password-submit", "password-error",
+    ):
+        assert f'id="{element}"' in html
+    assert parser.parents["nav-password"] == "site-menu"
+    assert parser.parents["password-form"] == "password-view"
+    js = (STATIC / "app.js").read_text()
+    assert '"/api/password"' in js
+    assert "#/password" in js
+
+
 def test_home_merges_capture_modes_into_tabs():
     html = (STATIC / "index.html").read_text()
     parser = _IdParentParser()
@@ -103,8 +119,7 @@ process.stdout.write(JSON.stringify(result));
     for state, (route, current) in zip(states, expected, strict=True):
         assert state["route"] == route
         assert [name for name, hidden in state["views"].items() if not hidden] == [route]
-        if current != "password":
-            assert [name for name, value in state["nav"].items() if value == "page"] == [current]
+        assert [name for name, value in state["nav"].items() if value == "page"] == [current]
         assert "password" in state["views"]
 
 

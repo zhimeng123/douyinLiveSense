@@ -515,3 +515,14 @@ def test_app_js_calls_model_endpoints():
         "/api/models/job",
     ]:
         assert endpoint in js
+
+
+def test_delete_session_uses_inline_confirmation():
+    js = (STATIC / "app.js").read_text()
+    assert "window.confirm" not in js
+    assert "function promptRemove" in js
+    assert "function cancelRemove" in js
+    assert "function discardSession" in js
+    assert "removedSessions" in js
+    assert "确认删除" in js
+    assert "/api/sessions/${view.id}`, { method: \"DELETE\" }" in js

@@ -578,6 +578,19 @@ select:focus {
 .text-button:hover:not(:disabled) {
   text-decoration: underline;
 }
+.text-button.danger {
+  color: #a44e30;
+}
+.delete-confirm {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: #a44e30;
+}
+.delete-confirm[hidden] {
+  display: none;
+}
 .audio-actions a {
   font-size: 12px;
   color: #7f9181;

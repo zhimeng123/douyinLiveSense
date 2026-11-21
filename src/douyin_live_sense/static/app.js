@@ -13,6 +13,7 @@ const state = {
   refreshRunning: false, tick: 0, actionError: null, monitor: null,
   monitorEnabled: false, analysisBusy: false, sessions: new Map(),
   visibleSessions: new Set(), pinnedSession: null, route: "home",
+  removedSessions: new Set(),
   homeTab: "douyin", lastMode: undefined,
   queueRequests: new Map(), queueLoading: false,
   localBusy: false, localSessionId: null, localReportId: null,
@@ -508,6 +509,36 @@ async function loadReport(report) {
     report.empty.hidden = report.rows.size > 0;
   } finally { report.loading = false; }
 }
+function promptRemove(view) {
+  view.remove.hidden = true;
+  view.removeConfirm.hidden = false;
+}
+function cancelRemove(view) {
+  view.removeConfirm.hidden = true;
+  view.remove.hidden = false;
+}
+function discardSession(view) {
+  view.deleted = true;
+  state.removedSessions.add(view.id);
+  state.sessions.delete(view.id);
+  state.visibleSessions.delete(view.id);
+  if (state.pinnedSession === view.id) state.pinnedSession = null;
+  view.root.remove();
+}
+async function removeSession(view) {
+  const label = `${view.data.anchor_name || `直播间 ${view.data.room_id}`} · ${stamp(view.data.started_at)}`;
+  cancelRemove(view);
+  try {
+    await api(`/api/sessions/${view.id}`, { method: "DELETE" });
+  } catch (error) {
+    view.error.textContent = `删除失败：${error.message}`;
+    view.error.scrollIntoView({ block: "nearest" });
+    return;
+  }
+  discardSession(view);
+  notice(`已删除合集「${label}」。`);
+  await loadSessions();
+}
 function createSession(session) {
   const view = disclosure("", "session-archive");
   view.id = session.id;
@@ -523,8 +554,16 @@ function createSession(session) {
   view.retry.hidden = true;
   view.downloadZip = node("a", "下载整场音频（ZIP）", "text-button");
   view.downloadZip.href = `/api/sessions/${view.id}/audio.zip`;
+  view.remove = button("删除合集", () => promptRemove(view), "text-button danger");
+  view.removeConfirm = node("span", "", "delete-confirm");
+  view.removeConfirm.hidden = true;
+  view.removeConfirm.append(
+    node("span", "删除后不可恢复，确认？"),
+    button("确认删除", () => removeSession(view), "text-button danger"),
+    button("取消", () => cancelRemove(view)),
+  );
   const actions = node("div", undefined, "archive-actions");
-  actions.append(view.generate, view.retry, view.downloadZip);
+  actions.append(view.generate, view.retry, view.downloadZip, view.remove, view.removeConfirm);
   view.feedback = node("p", "", "analysis-feedback");
   view.feedback.setAttribute("role", "status");
   view.feedback.setAttribute("aria-live", "polite");
@@ -573,7 +612,10 @@ function renderSessionList() {
 async function loadSessions() {
   const sessions = await api(`/api/sessions?limit=50&offset=${state.sessionsOffset}`);
   state.visibleSessions = new Set(sessions.map((s) => s.id));
-  for (const session of sessions) updateSession(state.sessions.get(session.id) || createSession(session), session);
+  for (const session of sessions) {
+    if (state.removedSessions.has(session.id)) continue;
+    updateSession(state.sessions.get(session.id) || createSession(session), session);
+  }
   renderSessionList();
   $("sessions-prev").disabled = state.sessionsOffset === 0;
   $("sessions-next").disabled = sessions.length < 50;
@@ -641,7 +683,7 @@ async function loadClip(clip) {
   } finally { clip.loading = false; }
 }
 async function loadSession(view, around = null) {
-  if (view.loading) return;
+  if (view.loading || view.deleted || !view.root.isConnected) return;
   view.loading = true;
   try {
     const [segments, result, events] = await Promise.all([
@@ -673,6 +715,10 @@ async function loadSession(view, around = null) {
     view.page.textContent = String(view.offset / 100 + 1);
     if (view.whole.root.open) await loadReport(view.report);
     for (const clip of ordered) if (!clip.root.hidden && clip.root.open) await loadClip(clip);
+  } catch (error) {
+    // 场次可能已在别的页面/标签删除：直接收起卡片，别再反复请求 404。
+    if (String(error.message).includes("场次不存在")) { discardSession(view); return; }
+    throw error;
   } finally { view.loading = false; }
 }
 async function post(path, body) {

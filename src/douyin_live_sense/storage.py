@@ -1,6 +1,7 @@
 import fcntl
 import json
 import os
+import shutil
 import sqlite3
 import struct
 import wave
@@ -222,6 +223,40 @@ class Storage:
         ).fetchall()
         for row in rows:
             self.finish_session(row["id"], reason)
+
+    def delete_session(self, session_id: str) -> bool:
+        """删除一个场次：其音频文件、切片、事件与分析记录一并移除。"""
+        session = self.session(session_id)
+        if not session:
+            return False
+        with self.db:
+            self.db.execute(
+                "DELETE FROM utterance_sources WHERE "
+                "utterance_id IN (SELECT id FROM utterances WHERE run_id IN "
+                "(SELECT id FROM analysis_runs WHERE session_id=?)) "
+                "OR segment_id IN (SELECT id FROM segments WHERE session_id=?)",
+                (session_id, session_id),
+            )
+            for table in ("utterances", "speaker_profiles", "analysis_jobs"):
+                self.db.execute(
+                    f"DELETE FROM {table} WHERE run_id IN "
+                    "(SELECT id FROM analysis_runs WHERE session_id=?)",
+                    (session_id,),
+                )
+            self.db.execute("DELETE FROM analysis_runs WHERE session_id=?", (session_id,))
+            self.db.execute("DELETE FROM events WHERE session_id=?", (session_id,))
+            self.db.execute("DELETE FROM segments WHERE session_id=?", (session_id,))
+            self.db.execute("DELETE FROM epochs WHERE session_id=?", (session_id,))
+            self.db.execute("DELETE FROM sessions WHERE id=?", (session_id,))
+        self._remove_tree(self.data_dir / "audio" / session["room_id"] / session_id)
+        self._remove_tree(self.data_dir / "analysis" / session_id)
+        return True
+
+    def _remove_tree(self, path: Path) -> None:
+        resolved = path.resolve()
+        if not resolved.is_relative_to(self.data_dir):
+            raise ValueError("删除路径超出数据目录。")
+        shutil.rmtree(resolved, ignore_errors=True)
 
     def sessions(self, limit: int = 50, offset: int = 0) -> list[dict]:
         rows = self.db.execute(

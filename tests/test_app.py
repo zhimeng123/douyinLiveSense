@@ -78,3 +78,64 @@ def test_pending_audio_is_not_public_and_invalid_host_origin_rejected(settings, 
         path.unlink()
         assert client.get(f"/api/segments/{segment_id}/audio").status_code == 404
     store.close()
+
+
+def test_delete_session_removes_audio_records_and_files(settings, auth):
+    store = Storage(settings.data_dir)
+    monitor = Monitor(store, settings, FakeSource(), FakeCapture())
+    app = create_app(settings, monitor, auth=auth)
+    session = store.create_session("123", "live", "主播", "标题")
+    writer = SegmentWriter(store, settings, session["id"])
+    writer.feed(b"\x01\x02" * 8, utc_now())
+    writer.close()
+    audio_dir = settings.data_dir / "audio" / "123" / session["id"]
+    assert audio_dir.is_dir()
+    with TestClient(app, base_url="http://127.0.0.1") as client:
+        login(client)
+        assert client.delete("/api/sessions/missing").status_code == 404
+        response = client.delete(f"/api/sessions/{session['id']}")
+        assert response.status_code == 200
+        assert response.json() == {"deleted": session["id"]}
+        assert client.get(f"/api/sessions/{session['id']}").status_code == 404
+        assert store.session(session["id"]) is None
+        assert not audio_dir.exists()
+        assert client.get("/api/sessions").json() == []
+    store.close()
+
+
+def test_delete_session_blocked_while_recording(settings, auth):
+    store = Storage(settings.data_dir)
+    monitor = Monitor(store, settings, FakeSource(), FakeCapture())
+    app = create_app(settings, monitor, auth=auth)
+    with TestClient(app, base_url="http://127.0.0.1") as client:
+        login(client)
+        assert client.post("/api/monitor/start", json={"room": "123"}).status_code == 200
+        deadline = time.monotonic() + 2
+        while not monitor.session:
+            assert time.monotonic() < deadline
+            time.sleep(0.005)
+        session_id = monitor.session["id"]
+        assert client.delete(f"/api/sessions/{session_id}").status_code == 409
+        assert client.post("/api/monitor/stop").status_code == 200
+    store.close()
+
+
+def test_delete_session_blocked_while_analysing(settings, auth):
+    store = Storage(settings.data_dir)
+    session = store.create_session("123", "live", "主播", "标题")
+    monitor = Monitor(store, settings, FakeSource(), FakeCapture())
+    app = create_app(settings, monitor, auth=auth)
+    with TestClient(app, base_url="http://127.0.0.1") as client:
+        login(client)
+        # 停掉调度循环，才能稳定构造“存在未完成分析”的状态。
+        app.state.analysis.task.cancel()
+        time.sleep(0.05)
+        with store.db:
+            store.db.execute(
+                "INSERT INTO analysis_runs(id,session_id,config_key,config_json,created_at,state) "
+                "VALUES (?,?,?,?,?,'pending')",
+                ("run-1", session["id"], "k", "{}", utc_now()),
+            )
+        assert client.delete(f"/api/sessions/{session['id']}").status_code == 409
+        assert store.session(session["id"]) is not None
+    store.close()

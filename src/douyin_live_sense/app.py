@@ -742,6 +742,24 @@ def create_app(
             raise HTTPException(404, "场次不存在。")
         return app.state.store.events(session_id)
 
+    @app.delete("/api/sessions/{session_id}")
+    async def delete_session(session_id: str):
+        store = app.state.store
+        if not store.session(session_id):
+            raise HTTPException(404, "场次不存在。")
+        recording = app.state.monitor.session
+        if recording and recording["id"] == session_id:
+            raise HTTPException(409, "该合集正在采集中，请先停止采集再删除。")
+        busy = store.db.execute(
+            "SELECT 1 FROM analysis_runs WHERE session_id=? "
+            "AND state IN ('pending','processing') LIMIT 1",
+            (session_id,),
+        ).fetchone()
+        if busy:
+            raise HTTPException(409, "该合集正在分析中，请等待分析结束后再删除。")
+        store.delete_session(session_id)
+        return {"deleted": session_id}
+
     @app.get("/api/sessions/{session_id}/audio.zip")
     async def download_session_audio(session_id: str):
         store = app.state.store
